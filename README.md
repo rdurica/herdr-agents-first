@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="preview.png" alt="Herdr with the settle-closes mod" width="880" />
+  <img src="preview.png" alt="The Agents panel with the settle-closes mod" width="420" />
 </p>
 
 <h1 align="center">Herdr · Settle Closes</h1>
@@ -37,10 +37,6 @@ This mod makes settle mean what it says: **the work is done, clean it up**.
   agent in that group the same way.
 - **The rest is the stock panel.** Priority / grouped-by-space sorting, pins,
   sub-agent trees, attention states, the compact rail — all unchanged.
-
-<p align="center">
-  <img src="docs/agents.png" alt="Agents panel" width="420" />
-</p>
 
 > The archive icon in the screenshot is *Settle all* for the Idle group. On a
 > row, pin and settle appear on hover, next to the agent's name.
