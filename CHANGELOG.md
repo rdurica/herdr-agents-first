@@ -5,6 +5,11 @@
 - Agent rows in the priority view and in the Pinned and Settled groups show the
   agent's own session title on a second line instead of an automatic tab number.
 - OpenCode's `OC | ` prefix is stripped from that title.
+- The installer updates an existing `agents-clean` mod in place instead of
+  refusing to run. If the installed `main.js` or `mod.json` was changed, it is
+  copied to `~/.cache/herdr-settle-close/` first.
+- Release archives and git now ignore the generated `gpui-kit.d.ts` and
+  `jsconfig.json` files.
 
 ## 0.1.0 — 2026-10-31
 

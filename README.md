@@ -58,6 +58,8 @@ cd herdr-settle-close
 The installer copies `mods/agents-clean/` and `layouts/main-settle.json` into
 `~/.config/herdr-app/`, runs `herdr-app check`, and switches the window to the
 `main-settle` layout. An existing layout with that name is never overwritten.
+Run it again to update the mod; a locally changed copy is backed up to
+`~/.cache/herdr-settle-close/` first.
 
 Use Herdr from another folder? `HERDR_APP_HOME=/path ./install.sh`.
 

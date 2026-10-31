@@ -12,6 +12,7 @@ mkdir -p "$here/dist"
 rm -f "$out"
 cd "$here/.."
 zip -rq "$out" "$name" \
-  -x "$name/dist/*" "$name/.git/*" "$name/*.zip" "*/.DS_Store"
+  -x "$name/dist/*" "$name/.git/*" "$name/*.zip" "*/.DS_Store" \
+     "$name/mods/*/gpui-kit.d.ts" "$name/mods/*/jsconfig.json"
 
 echo "$out"
