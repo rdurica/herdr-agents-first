@@ -3,7 +3,8 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, exec, notify, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
+import { settleAction, isManaged } from "./settle.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -32,17 +33,117 @@ const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}~\/]+/u, "").trim();
 // OpenCode prefixes its terminal title with "OC | "; only the session name is news.
 const sessionTitle = (s) => clean(s).replace(/^OC\s*\|\s*/i, "");
 
+async function git(cwd, args, on) {
+  try {
+    const r = await exec("git", args, { cwd, on });
+    return { ok: r.code === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? r.stdout ?? "").trim() };
+  } catch (error) {
+    return { ok: false, out: "", err: String(error) };
+  }
+}
+
+// The checkout a space's last tab is in: whether Herdr made it, and whether it
+// still holds work. On any doubt (a git error) keep it: replace, or dirty and
+// not merged, so nothing is deleted on a guess.
+async function inspect(folder, on) {
+  if (!folder) return null;
+  const top = await git(folder, ["rev-parse", "--show-toplevel"], on);
+  if (!top.ok) return null;
+  const common = await git(folder, ["rev-parse", "--path-format=absolute", "--git-common-dir"], on);
+  if (!common.ok) return null;
+  const main = common.out.endsWith("/.git") ? common.out.slice(0, -5) : common.out;
+  if (!isManaged(top.out, main)) return { top: top.out, main, managed: false, dirty: true, merged: false };
+  const status = await git(top.out, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], on);
+  const dirty = !status.ok || status.out !== "";
+  let merged = false;
+  // Only branch-attached commits survive a worktree remove with their name: a
+  // detached HEAD (in the worktree or the main checkout) leaves the question
+  // open, and an open question never deletes.
+  const head = await git(top.out, ["symbolic-ref", "--quiet", "--short", "HEAD"], on);
+  const branch = await git(main, ["symbolic-ref", "--short", "HEAD"], on);
+  if (head.ok && head.out && branch.ok && branch.out) {
+    merged = (await git(top.out, ["merge-base", "--is-ancestor", "HEAD", `refs/heads/${branch.out}`], on)).ok;
+  }
+  return { top: top.out, main, managed: true, dirty, merged };
+}
+
+// A finished agent can share its tab with one still working; closing the tab
+// would end that turn too.
+const tabBusy = (tab) => tab?.status === "working" || tab?.status === "blocked";
+
+// Whether a folder is a checkout or inside it, across Windows and Unix slashes.
+const insidePath = (path, top) => {
+  const [p, t] = [path, top].map((s) => String(s ?? "").replace(/\\/g, "/").replace(/\/+$/, ""));
+  return Boolean(t) && (p === t || p.startsWith(`${t}/`));
+};
+
+// Another space (on the same machine) still shows this checkout: removing it
+// would pull the files out from under that terminal.
+const inUseElsewhere = (spaceId, top, on) =>
+  spaces().some(
+    (s) =>
+      s.id !== spaceId &&
+      (s.machine ?? null) === on &&
+      s.tabs.some((t) => panes().some((p) => p.tab === t.id && p.cwd && insidePath(p.cwd, top))),
+  );
+
+function keepTab(batch) {
+  if (!batch) notify({ title: "Tab kept", body: "An agent in it is still working or waiting.", level: "warning" });
+}
+
 // Settling ends the work: close its tab (and the terminal in it). A tab that is
 // its space's last one gets a new tab first, so the space stays instead of
-// closing with it.
-function settleTab(spaceId, tabId) {
+// closing with it; a managed worktree that is clean and merged goes with it.
+async function settleTab(spaceId, tabId, { batch = false } = {}) {
   const space = spaces().find((s) => s.id === spaceId);
-  if (!space) return;
-  if (space.tabs.length <= 1) {
-    const folder = panes().find((p) => p.tab === tabId)?.cwd || space.folder;
-    run("tab.new", folder ? { space: space.id, folder } : { space: space.id });
+  const tab = space?.tabs.find((t) => t.id === tabId);
+  if (!tab) return;
+  if (tabBusy(tab)) return keepTab(batch);
+  if (space.tabs.length > 1) return run("tab.close", { id: tabId });
+
+  const folder = panes().find((p) => p.tab === tabId)?.cwd || space.folder;
+  const on = space.machine ?? null;
+  const repo = await inspect(folder, on);
+
+  // exec awaits: the space, the tab or the other agents in it may have changed.
+  const now = spaces().find((s) => s.id === spaceId);
+  const current = now?.tabs.find((t) => t.id === tabId);
+  if (!current) return;
+  const action = settleAction({
+    lastTab: now.tabs.length <= 1,
+    managed: Boolean(repo?.managed),
+    dirty: repo?.dirty ?? true,
+    merged: repo?.merged ?? false,
+    busy: tabBusy(current),
+    batch,
+  });
+
+  if (action === "keep") return keepTab(batch);
+  if (action === "close") return run("tab.close", { id: tabId });
+  if (action === "replace") {
+    // New tab first: closing the last one would close the space.
+    run("tab.new", folder ? { space: spaceId, folder } : { space: spaceId });
+    return run("tab.close", { id: tabId });
   }
-  run("tab.close", { id: tabId });
+  if (action === "remove") {
+    // Another space still shows this checkout: keep the tree, close only this tab.
+    if (inUseElsewhere(spaceId, repo.top, on)) return run("tab.close", { id: tabId });
+    run("space.close", { id: spaceId, confirmed: true });
+    // Without --force: a checkout git still needs is kept, not lost.
+    const r = await git(repo.main, ["worktree", "remove", repo.top], on);
+    if (!r.ok) notify({ title: "Worktree kept", body: r.err || repo.top, level: "warning" });
+    return;
+  }
+  if (action === "ask") {
+    // The stock dialog warns about uncommitted changes; cancelling leaves all as it is.
+    openOverlay({
+      mod: "worktree",
+      kind: "dialog",
+      width: 440,
+      height: 260,
+      props: { space: spaceId, folder: repo.top, action: "remove" },
+    });
+  }
 }
 
 // A tab nobody named is called by its place ("2"), and the new menu names an agent
@@ -87,6 +188,7 @@ function icon(p, size, color) {
 
 export default class Agents extends View {
   init(_props, cx) {
+    this.settling = new Set();
     if (props()?.sortMenu) return;
     this.folded = new Set(["settled"]);
     // Each agent's last state and when it changed (ms), kept across restarts.
@@ -173,6 +275,35 @@ export default class Agents extends View {
 
   peek(addr) {
     run("terminal.peek", { terminal: addr });
+  }
+
+  // One settle at a time per tab: a second click while git runs would act twice.
+  settle(cx, spaceId, tabId) {
+    if (this.settling.has(tabId)) return;
+    this.settling.add(tabId);
+    cx.spawn(async () => {
+      try {
+        await settleTab(spaceId, tabId);
+      } finally {
+        this.settling.delete(tabId);
+      }
+    });
+  }
+
+  // Settle all is one task, run in order: after a close, the next tab may be
+  // its space's last one.
+  settleAll(cx, list) {
+    cx.spawn(async () => {
+      for (const a of list) {
+        if (this.settling.has(a.tab)) continue;
+        this.settling.add(a.tab);
+        try {
+          await settleTab(a.space, a.tab, { batch: true });
+        } finally {
+          this.settling.delete(a.tab);
+        }
+      }
+    });
   }
 
   // Live sub-agents of `addr`, depth first, each with the tree lines in front of it.
@@ -316,7 +447,7 @@ export default class Agents extends View {
       .tooltip(tip)
       .on_click((_e, cx) => {
         cx.stop_propagation();
-        act();
+        act(cx);
         // The row moves away from under the pointer, and no hover-out comes.
         this.hovered = null;
         cx.notify();
@@ -348,11 +479,12 @@ export default class Agents extends View {
       const pin = action(`pin-${a.address}`, isPinned ? "pin-off" : "pin", isPinned ? "Unpin" : "Pin to the top", () =>
         this.setPins(isPinned ? this.pins.filter((p) => p !== a.address) : [...this.pins, a.address]));
       // Settle closes the tab, so only a finished agent offers it: a working one
-      // would just be killed by a misplaced click.
+      // would just be killed by a misplaced click. Another busy agent in the
+      // same tab is just as protected.
       const finished = a.status === "idle" || a.status === "done";
       const settle = isParked
         ? action(`unsettle-${a.address}`, "minus", "Bring back to the list", () => run("tab.unsettle", { id: a.tab }))
-        : !finished ? null : action(`settle-${a.address}`, "archive", "Settle: close its tab and end it", () => settleTab(a.space, a.tab));
+        : !finished || tabBusy(tabOf.get(a.tab)) ? null : action(`settle-${a.address}`, "archive", "Settle: close its tab and end it", (cx) => this.settle(cx, a.space, a.tab));
       // Under a space header the space goes without saying; an automatic tab number says nothing.
       // Without a space header above (priority, pinned) the row names its space.
       const full = byPriority || isPinned || isParked;
@@ -443,8 +575,8 @@ export default class Agents extends View {
         .child(div().truncate().text_color(t[g.status] ?? t.dim).child(g.label))
         .when(byPriority || !open || g.id === "settled", (el) => el.child(div().text_color(t.dim).child(String(g.members.length))))
         .child(div().flex_1())
-        .when(closable.length > 0, (el) => el.child(action(`settle-all-${g.id}`, "archive", `Settle all (${closable.length})`, () =>
-          closable.forEach(a => settleTab(a.space, a.tab)))))
+        .when(closable.length > 0, (el) => el.child(action(`settle-all-${g.id}`, "archive", `Settle all (${closable.length})`, (cx) =>
+          this.settleAll(cx, closable))))
         .when(!open, (el) => el
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
@@ -472,14 +604,29 @@ export default class Agents extends View {
             .justify_between()
             .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Agents"))
             .child(
-              div()
-                .id("ag-sort")
-                .text_size(11)
-                .text_color(t.dim)
-                .hover((s) => s.text_color(t.foreground))
-                .on_click(() => openOverlay({ mod: "agents-clean", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
-                .tooltip(`Sort agents: ${sort.label}`)
-                .child(svg(`mods/workspace-chrome/${sort.icon}.svg`).size(14)),
+              h_flex()
+                .gap(8)
+                .items_center()
+                .child(
+                  div()
+                    .id("ag-new")
+                    .text_size(11)
+                    .text_color(t.dim)
+                    .hover((s) => s.text_color(t.foreground))
+                    .on_click(() => openOverlay({ mod: "new-agent", kind: "dialog", width: 560, height: 560 }))
+                    .tooltip("New agent (ctrl-shift-a)")
+                    .child(svg("mods/workspace-chrome/plus.svg").size(14)),
+                )
+                .child(
+                  div()
+                    .id("ag-sort")
+                    .text_size(11)
+                    .text_color(t.dim)
+                    .hover((s) => s.text_color(t.foreground))
+                    .on_click(() => openOverlay({ mod: "agents-clean", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
+                    .tooltip(`Sort agents: ${sort.label}`)
+                    .child(svg(`mods/workspace-chrome/${sort.icon}.svg`).size(14)),
+                ),
             ),
         ),
       )
