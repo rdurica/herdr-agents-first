@@ -48,12 +48,18 @@ newest settle first.
   appear at the right — pin (top) and archive (Settle). Tooltip: "Settle: close
   its tab and end it". Working and blocked agents show only the pin, so a
   stray click cannot kill a running turn.
-- **Click Settle**: the space's tabs are read; if this tab is the only one,
-  `tab.new {space, folder}` opens a replacement tab in the same folder first,
-  then `tab.close {id}` closes the old tab. The row disappears on the next
-  render.
-- **Click Settle all (N)** in a header: the same for every finished, unfocused
-  agent in that group, one tab each (agents sharing a tab count once).
+- **Click Settle**: with other tabs in the space, `tab.close {id}`. On the
+  space's last tab, `tab.new {space, folder}` opens a replacement in the same
+  folder first, then `tab.close {id}` closes the old tab. On the last tab of a
+  linked worktree under `.herdr/worktrees`: clean and merged into the main
+  checkout's branch runs `space.close` then `git worktree remove` (no `--force`,
+  the branch stays); anything else opens the shipped `worktree` dialog with
+  `action: "remove"`. Decisions are in `settle.js`; a tab with another busy
+  agent is kept.
+- **Click `+`** in the header: opens the `new-agent` dialog (below).
+- **Click Settle all (N)** in a header: the same, one tab at a time, for every
+  finished, unfocused agent in that group (agents sharing a tab count once).
+  Worktrees that would ask are skipped.
 - **Click a row**: `pane.focus {pane}`. **Click a sub-agent row**: `terminal.peek`.
   **Click the chevron**: folds that agent's sub-agent tree. **Click a group
   header**: folds the group (folded state is per render; "settled" starts
@@ -67,6 +73,53 @@ newest settle first.
   `agent.next` / `agent.prev`.
 - **Settle** here is destructive and only offered for finished agents. The
   built-in `tab.settle` command is untouched and still parks.
+
+## New agent dialog
+
+Mod `new-agent`, opened by `ctrl-shift-a` (`mod.open:new-agent`) or the `+`: a
+560×560 dialog with a list of spaces, agent chips with a *Set as
+default* link, a task input, a New worktree checkbox with a branch input and a
+Start button.
+
+- The list is the open local spaces, one row per folder: a space is keyed by
+  the live `cwd` of its first tab, else its `folder`, and the active space
+  comes first. Spaces on other machines are left out. A new space is made with
+  Spaces `+`; the dialog has no folder picker.
+- `init` builds the rows from memory (one `spaces()` and one `panes()` call)
+  and paints synchronously. No `exec`, git, scan or agent check runs on open.
+- Agent chips come from `shared("new-agent.agents")` (plain
+  `{key,name,icon,tint,run}` entries). When that is missing or empty, one deferred `exec` checks the
+  agent commands on PATH
+  (after 800 ms, so the first frames paint) replaces the installed ones. *Set as
+  default* writes `new-agent.preferred`; without one the last used agent
+  (`new-agent.agent`) is selected. A chip click changes only this launch.
+- A row is git when its space shows a `branch`. The checkbox starts off and is
+  unavailable outside git. A space with an agent working or blocked is noted
+  on the row. A click or `alt-w` toggles it; on shows a branch input with
+  `branchName(task)` that follows the task until edited.
+- A task goes through the agent's own flag; Herdr appends its stock positional
+  `task` only for the rest:
+
+  | Agents | Delivery |
+  |---|---|
+  | opencode | `--prompt <task>` |
+  | copilot, antigravity | `-i <task>` |
+  | kimi | none at startup: Start asks to clear the task or pick another agent |
+  | every other agent | Herdr's positional `task` |
+
+- Off: `space.select`, then `tab.new` in the space (folder = the row's key), or
+  `space.new {folder}` when the space has gone.
+- On: one `git rev-parse --show-toplevel --path-format=absolute
+  --git-common-dir` in the row's folder (`parseRepo`), `for-each-ref` for a
+  unique name unless the branch was typed, `show-ref`, then `git worktree add`
+  in the main checkout under `~/.herdr/worktrees/<repo>/<branch>`, then an
+  unnamed `space.new {folder, tab, argv}` (plus `task` for the agents that take
+  one), unnamed so the sidebar nests it under its repo. A folder outside git
+  reports "Not a git repository".
+- Enter, including with no input focused after a click, or the Start button
+  runs the launch. Start is dimmed until a space and an agent are chosen and
+  cannot fire twice.
+- The shipped `worktree` dialog is not reused: it cannot pass a task.
 
 ## Built from
 
@@ -88,12 +141,14 @@ newest settle first.
   `herdr`. State: `localStorage` keys `changed`, `pins`, `panels` (none here),
   `shared("agents.sort")`, `shared("sidebar.width")` / `sidebar.collapsed`.
 - Commands used: `pane.focus`, `terminal.peek`, `tab.new`, `tab.close`,
-  `tab.unsettle`, `layout.resize`, `layout.select`, `layout.show`,
-  `layout.hide`. Assets: `mods/workspace-chrome/{spinner,check,chevron-down,
-  chevron-right,pin,pin-off,minus,archive,clock,layers}.svg` and the program
-  icons from the app's program table. No `exec`, `hc`, fetch or file access.
-- The installer `install.sh` copies the two folders into
-  `~/.config/herdr-app` (or `HERDR_APP_HOME`), runs `herdr-app check`, then
+  `tab.unsettle`, `space.close`, `layout.resize`, `layout.select`,
+  `layout.show`, `layout.hide`. Assets: `mods/workspace-chrome/{spinner,check,chevron-down,
+  chevron-right,pin,pin-off,minus,archive,clock,layers,plus}.svg` and the
+  program icons from the app's program table. `exec` runs `git` in
+  `new-agent`, only from Start with a worktree on. No `hc` or network.
+- The installer `install.sh` copies the mods and the layout into
+  `~/.config/herdr-app` (or `HERDR_APP_HOME`), merges `ctrl-shift-a` into an
+  existing `keys.json`, runs `herdr-app check` on both, then
   `layout.switch main-settle`.
 
 ## Watch out
@@ -114,6 +169,12 @@ newest settle first.
   the popup and the layout break.
 - `Settle all` is always visible on groups with closable agents; clicking it
   closes several tabs at once.
+- Herdr 0.9.5 stalls for seconds on the first redraws after any dialog opens,
+  shipped ones too (the main thread is in JIT maintenance). The dialog redraws
+  as little as it can: no redraw on focus or typing a task, no agent check once
+  a list is stored.
+- A worktree has no ignored files (`.env`, `node_modules`) of its own.
+- `new-agent` covers this computer only; remote spaces are left out.
 - Compact rail mode (<160px) draws no actions; widen the sidebar to settle.
 
 ## Done when
@@ -126,5 +187,8 @@ newest settle first.
 - Clicking archive on a space's only tab leaves exactly one new tab in that
   space (same folder) and the space stays in the spaces list.
 - "Settle all (N)" closes the finished agents in that group and nothing else.
+- `ctrl-shift-a` lists a repo once, and starting with the checkbox off adds a
+  tab to that repo's space; with it on, a nested space on a new branch.
+- Settling a clean, merged worktree's last tab removes it; a dirty one asks.
 - `ctrl-shift-l` switches to `main-settle`, and the panel matches
   `preview.png`.
