@@ -13,6 +13,26 @@ export function settleAction({ lastTab, managed, dirty, merged, busy = false, ba
   return batch ? "skip" : "ask";
 }
 
+// Settle all runs tab after tab: Herdr applies a close on a later tick, so the
+// next tab's space is stale until the closed tab is gone. Waits up to `tries`
+// pauses for that, then carries on regardless; returns how many were skipped.
+export async function settleInTurn(tabs, { settle, gone, pause, tries = 40 }) {
+  let skipped = 0;
+  for (const tab of tabs) {
+    const result = await settle(tab);
+    if (result === "skip") {
+      skipped += 1;
+      continue;
+    }
+    if (result !== "closed") continue;
+    for (let i = 0; i <= tries; i += 1) {
+      if (await gone(tab)) break;
+      if (i < tries) await pause();
+    }
+  }
+  return skipped;
+}
+
 // A tree Herdr made under .herdr/worktrees, not the repo's main checkout.
 export function isManaged(top, main) {
   const [t, m] = [top, main].map((p) => String(p ?? "").replace(/\\/g, "/").replace(/\/+$/, ""));

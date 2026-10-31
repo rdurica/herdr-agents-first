@@ -11,6 +11,9 @@
 - Settling the last tab of a worktree space removes the worktree when it is
   clean and merged, and asks otherwise. `Settle all` skips the ones that would
   ask. The branch stays.
+- `Settle all` no longer stops after the first tab or leaves a space's last tab
+  behind a confirm dialog: it waits for each tab's close to land before settling
+  the next, and it reports the worktrees it skipped in a warning.
 - A finished agent is not settled while another agent in its tab is busy.
 - The installer installs both mods and adds `ctrl-shift-a` to `keys.json`,
   backing the file up and leaving a key already in use alone.

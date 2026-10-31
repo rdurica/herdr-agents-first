@@ -189,7 +189,7 @@ status bar) is the shipped setup.
   running agent's turn is lost — that is why the button is gated on `idle` /
   `done`.
 - `Settle all` is always visible on groups that have finished agents and closes
-  several tabs at once.
+  several tabs one after another, waiting for each close to land.
 - The built-in `tab.settle` command (palette, CLI, keys) is part of the Herdr
   core and still only parks a tab. This mod changes the panel's button only.
 - A finished agent is not settled while another agent in its tab is working or

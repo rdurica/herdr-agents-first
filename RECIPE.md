@@ -57,9 +57,10 @@ newest settle first.
   `action: "remove"`. Decisions are in `settle.js`; a tab with another busy
   agent is kept.
 - **Click `+`** in the header: opens the `new-agent` dialog (below).
-- **Click Settle all (N)** in a header: the same, one tab at a time, for every
-  finished, unfocused agent in that group (agents sharing a tab count once).
-  Worktrees that would ask are skipped.
+- **Click Settle all (N)** in a header: the same, one tab after another, waiting
+  for each close to land before settling the next. It covers every finished,
+  unfocused agent in that group (agents sharing a tab count once). Worktrees
+  that would ask are skipped and reported in a warning.
 - **Click a row**: `pane.focus {pane}`. **Click a sub-agent row**: `terminal.peek`.
   **Click the chevron**: folds that agent's sub-agent tree. **Click a group
   header**: folds the group (folded state is per render; "settled" starts
@@ -157,7 +158,10 @@ Start button.
   button is gated on `idle` / `done`; do not widen it to `working` casually.
 - Closing the last tab of a space closes the space, so `settleTab` must create
   the replacement tab **before** `tab.close`; reversing the two loses the
-  space. `run()` applies most commands before it returns, so the order holds.
+  space. Commands apply in the order they are run, but a close lands on a later
+  tick: `spaces()` stays stale until it does, which is why `Settle all` waits
+  for each closed tab to go. A task that calls `run()` in the click's own turn
+  never wakes from its next `await`, so `Settle all` does an `exec` first.
 - `tab.new` wants a folder that exists on that space's machine; the code takes
   the tab's pane `cwd` and falls back to `space.folder`. Remote spaces carry
   `machine/`-prefixed ids — pass them through unchanged.
@@ -168,7 +172,7 @@ Start button.
   string, `mod.json` and the layout's `content.mod` must change together, or
   the popup and the layout break.
 - `Settle all` is always visible on groups with closable agents; clicking it
-  closes several tabs at once.
+  settles several tabs one after another, waiting for each close to land.
 - Herdr 0.9.5 stalls for seconds on the first redraws after any dialog opens,
   shipped ones too (the main thread is in JIT maintenance). The dialog redraws
   as little as it can: no redraw on focus or typing a task, no agent check once

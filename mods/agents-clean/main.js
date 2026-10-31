@@ -4,7 +4,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, exec, notify, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
-import { settleAction, isManaged } from "./settle.js";
+import { settleAction, isManaged, settleInTurn } from "./settle.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -89,17 +89,25 @@ const inUseElsewhere = (spaceId, top, on) =>
 
 function keepTab(batch) {
   if (!batch) notify({ title: "Tab kept", body: "An agent in it is still working or waiting.", level: "warning" });
+  return "keep";
+}
+
+// Closing a tab for settle; "closed" tells Settle all to wait for it to go.
+function closeTab(id) {
+  run("tab.close", { id });
+  return "closed";
 }
 
 // Settling ends the work: close its tab (and the terminal in it). A tab that is
 // its space's last one gets a new tab first, so the space stays instead of
 // closing with it; a managed worktree that is clean and merged goes with it.
+// Returns "closed", "keep" or "skip" for Settle all; the single settle ignores it.
 async function settleTab(spaceId, tabId, { batch = false } = {}) {
   const space = spaces().find((s) => s.id === spaceId);
   const tab = space?.tabs.find((t) => t.id === tabId);
   if (!tab) return;
   if (tabBusy(tab)) return keepTab(batch);
-  if (space.tabs.length > 1) return run("tab.close", { id: tabId });
+  if (space.tabs.length > 1) return closeTab(tabId);
 
   const folder = panes().find((p) => p.tab === tabId)?.cwd || space.folder;
   const on = space.machine ?? null;
@@ -119,20 +127,21 @@ async function settleTab(spaceId, tabId, { batch = false } = {}) {
   });
 
   if (action === "keep") return keepTab(batch);
-  if (action === "close") return run("tab.close", { id: tabId });
+  if (action === "skip") return "skip";
+  if (action === "close") return closeTab(tabId);
   if (action === "replace") {
     // New tab first: closing the last one would close the space.
     run("tab.new", folder ? { space: spaceId, folder } : { space: spaceId });
-    return run("tab.close", { id: tabId });
+    return closeTab(tabId);
   }
   if (action === "remove") {
     // Another space still shows this checkout: keep the tree, close only this tab.
-    if (inUseElsewhere(spaceId, repo.top, on)) return run("tab.close", { id: tabId });
+    if (inUseElsewhere(spaceId, repo.top, on)) return closeTab(tabId);
     run("space.close", { id: spaceId, confirmed: true });
     // Without --force: a checkout git still needs is kept, not lost.
     const r = await git(repo.main, ["worktree", "remove", repo.top], on);
     if (!r.ok) notify({ title: "Worktree kept", body: r.err || repo.top, level: "warning" });
-    return;
+    return "closed";
   }
   if (action === "ask") {
     // The stock dialog warns about uncommitted changes; cancelling leaves all as it is.
@@ -290,18 +299,32 @@ export default class Agents extends View {
     });
   }
 
-  // Settle all is one task, run in order: after a close, the next tab may be
-  // its space's last one.
+  // Settle all is one task, tab after tab: Herdr applies a close on a later
+  // tick, so the next tab's space is stale until the closed tab is gone.
   settleAll(cx, list) {
-    cx.spawn(async () => {
-      for (const a of list) {
-        if (this.settling.has(a.tab)) continue;
-        this.settling.add(a.tab);
-        try {
-          await settleTab(a.space, a.tab, { batch: true });
-        } finally {
-          this.settling.delete(a.tab);
-        }
+    cx.spawn(async (cx) => {
+      // Leave the click's own turn first: a task that calls run() in it never
+      // wakes from its next await, so the batch would end after one tab.
+      await git(undefined, ["--version"]);
+      const skipped = await settleInTurn(list, {
+        settle: async (a) => {
+          if (this.settling.has(a.tab)) return;
+          this.settling.add(a.tab);
+          try {
+            return await settleTab(a.space, a.tab, { batch: true });
+          } finally {
+            this.settling.delete(a.tab);
+          }
+        },
+        gone: async (a) => !spaces().some((s) => s.tabs.some((t) => t.id === a.tab)),
+        pause: () => cx.sleep(50),
+      });
+      if (skipped > 0) {
+        notify({
+          title: "Worktrees kept",
+          body: `${skipped} worktree${skipped === 1 ? "" : "s"} kept because of uncommitted or unmerged work.`,
+          level: "warning",
+        });
       }
     });
   }
