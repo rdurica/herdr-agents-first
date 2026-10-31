@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="preview.png" alt="The Agents panel with the settle-closes mod" width="420" />
-</p>
-
 <h1 align="center">Herdr · Settle Closes</h1>
 
 <p align="center">
@@ -14,6 +10,10 @@
   <img alt="Mod" src="https://img.shields.io/badge/format-herdr--mod-2ea44f" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue" />
+</p>
+
+<p align="center">
+  <img src="assets/settle.png" alt="Three blue birds flying through an open doorway" width="280" />
 </p>
 
 ## The problem
@@ -40,6 +40,10 @@ This mod makes settle mean what it says: **the work is done, clean it up**.
 
 > The archive icon in the screenshot is *Settle all* for the Idle group. On a
 > row, pin and settle appear on hover, next to the agent's name.
+
+<p align="center">
+  <img src="preview.png" alt="The Agents panel with the settle-closes mod" width="297" />
+</p>
 
 ## Install
 
