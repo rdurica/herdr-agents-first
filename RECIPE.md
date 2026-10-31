@@ -15,10 +15,14 @@ border and 13px text. Top to bottom:
 - a 41px header: "Agents" in 11.5px medium `dim` text on the left, and on the
   right the current sort icon (a clock for Priority, layers for Grouped by
   space) with a tooltip "Sort agents: <sort>".
-- a scrolling list of agent rows, 30px tall, 8px inner padding on the sides,
-  9px gaps. Each row: the program's icon (16px, tinted SVG or image), a name
-  (truncated), optionally a `· detail`, the machine name for remote agents, a
-  fold chevron with the sub-agent count when the agent has live sub-agents,
+- a scrolling list of agent rows, 30px tall (44px when the row names its space
+  and a detail line sits under it), 8px inner padding on the sides, 9px gaps.
+  Each row: the program's icon (16px, tinted SVG or image), a name (truncated),
+  a second 11.5px dim line under it with the tab's name, or the agent's own
+  session title when the tab only has its automatic name (priority view,
+  pinned and Settled rows; no `·` prefix; OpenCode's `OC | ` is dropped), the
+  machine name for remote agents, a fold chevron with the sub-agent count when
+  the agent has live sub-agents,
   and at the right a status mark: a 900ms spinner for `working`, a "Needs you"
   pill (or a compact `!` in priority view) for `blocked`, a hollow ring for
   `idle`, a dot for `done`. The focused row uses `selected`; hover uses `hover`;

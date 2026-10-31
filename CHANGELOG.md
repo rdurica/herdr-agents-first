@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Agent rows in the priority view and in the Pinned and Settled groups show the
+  agent's own session title on a second line instead of an automatic tab number.
+- OpenCode's `OC | ` prefix is stripped from that title.
+
 ## 0.1.0 — 2026-10-31
 
 First release.
