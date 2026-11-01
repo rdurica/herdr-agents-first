@@ -35,29 +35,97 @@ export function worktreePath(home, name, branch) {
   return `${String(home).replace(/[\\/]+$/, "")}/.herdr/worktrees/${name}/${flat}`;
 }
 
-// One row per open local space: keyed by its live folder, git from the branch
-// it shows, busy from its agents. A folder open twice keeps one row, the
-// active space's, and the active row comes first.
+// A row on one machine: the same folder on two machines stays two rows.
+export function projectId(row) {
+  return JSON.stringify([row.machine ?? null, row.key]);
+}
+
+// How a machine is keyed in the stored agent lists: this computer is "".
+export function machineKey(machine) {
+  return machine ?? "";
+}
+
+// One row per open space, local or remote: keyed by its live folder, git from
+// the branch it shows, busy from its agents. A folder open twice on one machine
+// keeps one row, the active space's, and the active row comes first.
 export function projectsFromSpaces(spaces, active = null) {
   const rows = new Map();
   for (const s of spaces) {
-    if (s.machine != null) continue;
     const key = s.cwd || s.folder;
     if (!key) continue;
+    const machine = s.machine ?? null;
     const row = {
       key,
+      machine,
       name: s.name,
       git: Boolean(s.branch),
       space: s.id,
       busy: s.status === "working" || s.status === "blocked",
     };
-    const seen = rows.get(key);
-    if (!seen || (s.id === active && seen.space !== active)) rows.set(key, row);
+    const id = projectId(row);
+    const seen = rows.get(id);
+    if (!seen || (s.id === active && seen.space !== active)) rows.set(id, row);
   }
   const list = [...rows.values()];
   const i = list.findIndex((r) => r.space === active);
   if (i > 0) list.unshift(...list.splice(i, 1));
   return list;
+}
+
+// The folder above a path, in the path's own separator style. null at a root
+// or when there is no segment to drop, so a browser has nowhere to go up.
+export function parentFolder(path) {
+  if (typeof path !== "string" || !path) return null;
+  const drive = /^[A-Za-z]:/.exec(path);
+  if (drive) {
+    const rest = path.slice(2);
+    if (!rest) return null;
+    const sep = rest.includes("\\") ? "\\" : "/";
+    const trimmed = rest.replace(/[\\/]+$/, "");
+    if (!trimmed) return null;
+    const i = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+    if (i < 0) return null;
+    const parent = trimmed.slice(0, i);
+    return parent ? drive[0] + parent : drive[0] + sep;
+  }
+  // A leading // or \\ is a UNC server, not a root to collapse away. Windows
+  // Resolve-Path prints the latter, so both styles are walked up.
+  const backslash = path.startsWith("\\\\");
+  const unc = backslash || path.startsWith("//");
+  const trimmed = backslash ? path.replace(/[\\/]+$/, "") : path.replace(/\/+$/, "");
+  if (!trimmed) return null;
+  const i = backslash
+    ? Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"))
+    : trimmed.lastIndexOf("/");
+  if (i < 0) return null;
+  if (i === 0) return "/";
+  if (unc && i === 1) return null;
+  return trimmed.slice(0, i);
+}
+
+// A folder name joined to a path with one separator, keeping the separator
+// style the path already uses.
+export function joinFolder(path, name) {
+  const base = String(path ?? "");
+  const child = String(name ?? "");
+  if (!base) return child;
+  const sep = base.includes("\\") && !base.includes("/") ? "\\" : "/";
+  if (base.endsWith("/") || base.endsWith("\\")) return base + child;
+  return `${base}${sep}${child}`;
+}
+
+// What a folder listing prints: the canonical path on the first line, then one
+// line per directory ending in "/". Names keep the shell's order.
+export function folderListing(stdout) {
+  const lines = String(stdout ?? "").split("\n").map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+  const names = [];
+  for (const line of lines.slice(1)) {
+    if (!line.endsWith("/")) continue;
+    const name = line.slice(0, -1);
+    if (!name || name === "." || name === "..") continue;
+    names.push(name);
+  }
+  return { path: lines[0] ?? "", names };
 }
 
 // Home as ~ (git says C:/Users/x where Windows says C:\Users\x).
@@ -67,8 +135,12 @@ export function tilde(path, userHome) {
   return `~${p.slice(h.length)}`;
 }
 
-// The remembered projects as plain { folder, name, git } entries. A missing or
-// garbage stored value is an empty list; an entry without a folder is dropped.
+// A stored machine is a non-empty string; anything else is this computer.
+const storedMachine = (machine) => (typeof machine === "string" && machine ? machine : null);
+
+// The remembered projects as plain { folder, machine, name, git } entries. A
+// missing or garbage stored value is an empty list; an entry without a folder is
+// dropped.
 export function readRecent(value) {
   if (!Array.isArray(value)) return [];
   const list = [];
@@ -77,6 +149,7 @@ export function readRecent(value) {
     if (typeof e.folder !== "string" || !e.folder) continue;
     list.push({
       folder: e.folder,
+      machine: storedMachine(e.machine),
       name: typeof e.name === "string" && e.name ? e.name : e.folder.split(/[\\/]/).filter(Boolean).pop() ?? e.folder,
       git: Boolean(e.git),
     });
@@ -84,39 +157,104 @@ export function readRecent(value) {
   return list;
 }
 
-// The project first, once per folder, the oldest dropped past the cap.
+// Favourites are stored like history: the same plain entries and normalizer.
+export const readFavorites = readRecent;
+
+// The project first, once per folder and machine, the oldest dropped past the
+// cap.
 export function rememberProject(recent, entry, cap = 30) {
-  const rest = recent.filter((e) => e.folder !== entry.folder);
-  return [{ folder: entry.folder, name: entry.name, git: Boolean(entry.git) }, ...rest].slice(0, cap);
+  const machine = storedMachine(entry.machine);
+  const rest = recent.filter((e) => !(e.folder === entry.folder && storedMachine(e.machine) === machine));
+  return [{ folder: entry.folder, machine, name: entry.name, git: Boolean(entry.git) }, ...rest].slice(0, cap);
+}
+
+// A star click: a folder already on that machine leaves the list, keeping the
+// order of the rest; a new one joins at the front. The list it was given stays.
+export function toggleFavorite(list, entry, cap = 50) {
+  const machine = storedMachine(entry.machine);
+  const stored = list.filter((e) => e.folder === entry.folder && storedMachine(e.machine) === machine);
+  if (stored.length) return list.filter((e) => !(e.folder === entry.folder && storedMachine(e.machine) === machine));
+  return rememberProject(list, entry, cap);
+}
+
+// The nth starred row, 1-based, or null out of range. The dialog numbers the
+// favourites it shows without counting the plain rows.
+export function pickFavorite(rows, n) {
+  if (!Number.isInteger(n) || n < 1) return null;
+  return rows.filter((r) => r.starred === true)[n - 1] ?? null;
 }
 
 // The open spaces' rows, then remembered projects that no open space shows. A
 // space shows a folder by its live folder (the row's key) or the folder it was
-// made in; either one swallows the history entry. A folder is listed once.
-export function projectList(spaceRows, recent, spaces = []) {
+// made in, but only on its own machine. A folder is listed once per machine.
+// Favourites lead in their stored order and carry `starred`/`favorite`; without
+// them the list is exactly the space rows plus history.
+export function projectList(spaceRows, recent, spaces = [], favorites = []) {
   const taken = new Set();
   for (const row of spaceRows) {
-    taken.add(row.key);
+    const machine = row.machine ?? null;
+    taken.add(projectId(row));
     const folder = spaces.find((s) => s.id === row.space)?.folder;
-    if (folder) taken.add(folder);
+    if (folder) taken.add(projectId({ key: folder, machine }));
   }
-  const rows = [...spaceRows];
+  const base = [...spaceRows];
   for (const e of recent) {
-    if (taken.has(e.folder)) continue;
-    taken.add(e.folder);
-    rows.push({ key: e.folder, name: e.name, git: Boolean(e.git), space: null, busy: false });
+    const machine = storedMachine(e.machine);
+    const id = projectId({ key: e.folder, machine });
+    if (taken.has(id)) continue;
+    taken.add(id);
+    base.push({ key: e.folder, machine, name: e.name, git: Boolean(e.git), space: null, busy: false });
   }
+  if (!favorites.length) return base;
+
+  const used = new Set();
+  const rows = [];
+  for (const fav of favorites) {
+    const machine = storedMachine(fav.machine);
+    const id = projectId({ key: fav.folder, machine });
+    const row = base.find(
+      (r) =>
+        (r.machine ?? null) === machine &&
+        !used.has(projectId(r)) &&
+        (r.key === fav.folder || spaces.find((s) => s.id === r.space)?.folder === fav.folder),
+    );
+    if (row) {
+      used.add(projectId(row));
+      rows.push({ ...row, starred: true, favorite: { folder: fav.folder, machine } });
+      continue;
+    }
+    // An earlier favourite already claimed this folder and machine.
+    if (taken.has(id)) continue;
+    taken.add(id);
+    rows.push({
+      key: fav.folder,
+      machine,
+      name: fav.name,
+      git: Boolean(fav.git),
+      space: null,
+      busy: false,
+      starred: true,
+      favorite: { folder: fav.folder, machine },
+    });
+  }
+  for (const row of base) if (!used.has(projectId(row))) rows.push(row);
   return rows;
 }
 
 const simple = (text) => fold(text).toLowerCase();
 
-// Rows whose name or folder (as written, or with home as ~) holds the query,
-// ignoring case and accents. A blank query keeps every row.
+// Rows whose name, folder (as written, or with home as ~) or machine holds the
+// query, ignoring case and accents. The ~ form only makes sense on this
+// computer. A blank query keeps every row.
 export function filterProjects(rows, query, home) {
   const q = simple(String(query ?? "").trim());
   if (!q) return rows;
-  return rows.filter((r) => [r.name, r.key, tilde(r.key, home)].some((s) => simple(s).includes(q)));
+  return rows.filter((r) => {
+    const parts = [r.name, r.key];
+    if (r.machine != null) parts.push(r.machine);
+    else parts.push(tilde(r.key, home));
+    return parts.some((s) => simple(s).includes(q));
+  });
 }
 
 // A worktree is only possible in git, and it starts off: only an explicit
@@ -134,6 +272,48 @@ export function pickAgent(agents, preferred, last, requested) {
   if (preferred && keys.includes(preferred)) return preferred;
   if (last && keys.includes(last)) return last;
   return keys[0] ?? null;
+}
+
+// What a chip and shared.json need, and nothing else: no runtime objects and no
+// installed flag, so a stored list loads as plain data.
+export function plainAgent(a) {
+  return {
+    key: a.key,
+    name: a.name,
+    icon: typeof a.icon === "string" ? a.icon : null,
+    tint: Boolean(a.tint),
+    run: Array.isArray(a.run) ? [...a.run] : [],
+  };
+}
+
+export const validAgent = (a) =>
+  Boolean(a) &&
+  typeof a.key === "string" &&
+  typeof a.name === "string" &&
+  Array.isArray(a.run) &&
+  a.run.every((s) => typeof s === "string");
+
+// The stored agent lists, keyed by machine ("" is this computer). The old
+// stored shape was one array: it becomes this computer's list.
+export function agentLists(value) {
+  if (Array.isArray(value)) return { "": value.filter(validAgent).map(plainAgent) };
+  if (!value || typeof value !== "object") return {};
+  const lists = {};
+  for (const [machine, list] of Object.entries(value)) {
+    if (!Array.isArray(list)) continue;
+    lists[machine] = list.filter(validAgent).map(plainAgent);
+  }
+  return lists;
+}
+
+export function agentsOn(lists, machine) {
+  return lists[machineKey(machine)] ?? [];
+}
+
+// A new map, so a running dialog can swap one machine's chips without touching
+// the lists it still reads.
+export function setAgentsOn(lists, machine, agents) {
+  return { ...lists, [machineKey(machine)]: (Array.isArray(agents) ? agents : []).map(plainAgent) };
 }
 
 // How a task reaches each agent. Herdr's stock delivery appends it as a
@@ -176,24 +356,27 @@ export function parseRepo(text) {
 }
 
 // The commands that start the agent, in order. Spaces stay unnamed so Herdr
-// names them after their folder and nests worktrees under their repo.
+// names them after their folder and nests worktrees under their repo. A remote
+// project's new spaces are made on its machine; a tab in an existing space
+// already lives there.
 export function launchPlan({ project, agent, task, worktree, path }) {
+  const on = typeof project.machine === "string" && project.machine ? { machine: project.machine } : {};
   // A terminal is a bare tab or space: no argv, task or name, so Herdr opens
   // its shell and names the tab itself.
   if (agent.key === TERMINAL.key) {
-    if (worktree) return [["space.new", { folder: path }]];
+    if (worktree) return [["space.new", { folder: path, ...on }]];
     if (project.space) {
       return [
         ["space.select", { id: project.space }],
         ["tab.new", { space: project.space, folder: project.key }],
       ];
     }
-    return [["space.new", { folder: project.key }]];
+    return [["space.new", { folder: project.key, ...on }]];
   }
   const delivery = agentArgv(agent, task);
   const withTask = delivery.task ? { task: delivery.task } : {};
   if (worktree) {
-    return [["space.new", { folder: path, tab: agent.name, argv: delivery.argv, ...withTask }]];
+    return [["space.new", { folder: path, ...on, tab: agent.name, argv: delivery.argv, ...withTask }]];
   }
   if (project.space) {
     return [
@@ -201,41 +384,9 @@ export function launchPlan({ project, agent, task, worktree, path }) {
       ["tab.new", { name: agent.name, space: project.space, folder: project.key, argv: delivery.argv, ...withTask }],
     ];
   }
-  return [["space.new", { folder: project.key, tab: agent.name, argv: delivery.argv, ...withTask }]];
+  return [["space.new", { folder: project.key, ...on, tab: agent.name, argv: delivery.argv, ...withTask }]];
 }
-
-// Herdr's program table, checked with one `exec` when the dialog has no list.
-// Keep in step with Herdr's table when it grows.
-const agent = (key, name, command, tint) => ({ key, name, icon: `icons/${key}.svg`, tint, run: [command] });
-export const AGENTS = [
-  agent("claude", "Claude Code", "claude", false),
-  agent("codex", "Codex", "codex", false),
-  agent("opencode", "OpenCode", "opencode", true),
-  agent("cursor", "Cursor", "cursor-agent", true),
-  agent("copilot", "Copilot", "copilot", true),
-  agent("gemini", "Gemini", "gemini", true),
-  agent("antigravity", "Antigravity", "agy", false),
-  agent("kimi", "Kimi", "kimi", false),
-  agent("pi", "Pi", "pi", true),
-  agent("amp", "Amp", "amp", false),
-  agent("grok", "Grok", "grok", true),
-  agent("kiro", "Kiro", "kiro-cli", false),
-  agent("hermes", "Hermes", "hermes", true),
-  agent("qoder", "Qoder", "qodercli", true),
-  agent("crush", "Crush", "crush", false),
-];
 
 // The shell chip, always offered last: it runs nothing, so Herdr opens its
-// shell. Not part of the probe table and never stored with the agents.
+// shell. Not part of the probed agents and never stored with them.
 export const TERMINAL = { key: "terminal", name: "Terminal", icon: "icons/shell.svg", tint: true, run: [] };
-
-// One `exec` that prints the path of every agent command on PATH.
-export function agentProbe() {
-  const names = AGENTS.map((a) => `'${a.run[0]}'`).join(" ");
-  return ["sh", ["-c", `for c in ${names}; do command -v "$c"; done; true`]];
-}
-
-export function installedAgents(stdout) {
-  const found = new Set(String(stdout).split("\n").map((l) => l.trim().split("/").pop()).filter(Boolean));
-  return AGENTS.filter((a) => found.has(a.run[0]));
-}

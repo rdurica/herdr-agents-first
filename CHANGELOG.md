@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.0 — 2026-11-01
+
+- **New agent works across Herdr machines.** The project list now includes the
+  open spaces and history of every connected machine, not just this computer.
+  Remote rows show `machine · folder`; the same absolute folder on two machines
+  stays two projects. History stores the machine, and old entries read as local.
+- Agent chips are per machine: `knownAgents({ on })` lists what is installed on
+  the selected project's machine, cached per machine in `new-agent.agents` and
+  refreshed when the dialog opens. A machine with no agents still offers the
+  Terminal chip; Start waits while the first check is running.
+- Start makes a remote space with `space.new { machine }` and starts the tab on
+  that machine. Git runs there too: a remote worktree goes under that machine's
+  `~/.herdr/worktrees`, with its home taken from the machine's shell.
+- Start refuses a machine that is offline or still loading, and waits for the
+  first agent check on a machine so a launch cannot fall back to Terminal by
+  accident.
+- Remote folders are browsed in the dialog, because Herdr's folder picker is
+  local-only: each remote machine gets a **Folder on &lt;machine&gt;…** row that
+  opens a folder browser on that machine. Click or Enter descends,
+  `..`/Backspace goes up, `~`/`alt-h` goes home, `alt-enter`/Use this folder
+  chooses the current folder, and Show hidden reveals dot-folders.
+- `new-agent.agents` changed from one array to a map keyed by machine (`""` is
+  this computer); the old shape is migrated on read.
+- **Favourite folders.** A star on each project row pins its folder to the top
+  of the list in `new-agent.favorites` (50 at most); `alt-f` stars the selected
+  row and `alt-1…9` select a favourite. Adding a worktree stores its main
+  checkout, so settling the checkout away does not lose it.
+- **Closing a workspace keeps its folder.** The Agents panel now remembers
+  every open workspace in `new-agent.recent` once a second, so the project is
+  still in New agent after Settle closes its space. History grew to 50 and both
+  writers use that cap.
+- The New agent dialog is larger (720×700), and Start closes it before the
+  background history write, so a slow remote machine no longer keeps it open.
+
 ## 0.2.0 — 2026-11-01
 
 - **Renamed to Agents first** (`herdr-agents-first`). The layout is now

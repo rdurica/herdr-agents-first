@@ -8,18 +8,27 @@ const {
   branchName,
   uniqueBranch,
   worktreePath,
+  projectId,
+  parentFolder,
+  joinFolder,
+  folderListing,
+  machineKey,
   projectsFromSpaces,
-  AGENTS,
   TERMINAL,
-  agentProbe,
-  installedAgents,
+  plainAgent,
+  agentLists,
+  agentsOn,
+  setAgentsOn,
   wantsWorktree,
   pickAgent,
   agentArgv,
   launchPlan,
   parseRepo,
   readRecent,
+  readFavorites,
   rememberProject,
+  toggleFavorite,
+  pickFavorite,
   projectList,
   filterProjects,
 } = await loadMod("mods/new-agent/logic.js");
@@ -92,6 +101,158 @@ describe("worktreePath", () => {
   });
 });
 
+describe("projectId", () => {
+  test("names a local row by its folder and a null machine", () => {
+    assert.equal(projectId({ key: "/repo/app" }), '[null,"/repo/app"]');
+    assert.equal(projectId({ key: "/repo/app", machine: null }), '[null,"/repo/app"]');
+    assert.equal(projectId({ key: "/repo/app", machine: undefined }), '[null,"/repo/app"]');
+  });
+
+  test("names a remote row by its machine and folder", () => {
+    assert.equal(projectId({ key: "/repo/app", machine: "wsl" }), '["wsl","/repo/app"]');
+  });
+
+  test("gives the same folder on two machines different ids", () => {
+    const local = projectId({ key: "/repo/app", machine: null });
+    const wsl = projectId({ key: "/repo/app", machine: "wsl" });
+
+    assert.notEqual(local, wsl);
+    assert.notEqual(wsl, projectId({ key: "/repo/app", machine: "vps" }));
+  });
+
+  test("does not let a machine and a folder swap places", () => {
+    assert.notEqual(projectId({ key: "b", machine: "a" }), projectId({ key: "a", machine: "b" }));
+    assert.notEqual(projectId({ key: "/repo/other", machine: "wsl" }), projectId({ key: "/repo/app", machine: "wsl" }));
+  });
+
+  test("quotes a folder so that the parts stay apart", () => {
+    assert.equal(projectId({ key: 'a"b', machine: "wsl" }), '["wsl","a\\"b"]');
+  });
+});
+
+describe("parentFolder", () => {
+  test("walks up a POSIX folder one segment at a time", () => {
+    assert.equal(parentFolder("/home/me"), "/home");
+    assert.equal(parentFolder("/home"), "/");
+  });
+
+  test("is null at a POSIX root or without a segment to drop", () => {
+    assert.equal(parentFolder("/"), null);
+    assert.equal(parentFolder("name"), null);
+    assert.equal(parentFolder(""), null);
+    assert.equal(parentFolder(null), null);
+    assert.equal(parentFolder(undefined), null);
+  });
+
+  test("walks up a relative path but stops at a bare name", () => {
+    assert.equal(parentFolder("relative/path"), "relative");
+  });
+
+  test("ignores a trailing slash", () => {
+    assert.equal(parentFolder("/home/me/"), "/home");
+  });
+
+  test("keeps a Windows path's backslashes", () => {
+    assert.equal(parentFolder("C:\\Users\\me"), "C:\\Users");
+    assert.equal(parentFolder("C:\\Users"), "C:\\");
+    assert.equal(parentFolder("C:\\"), null);
+  });
+
+  test("keeps a forward-slash drive's separators", () => {
+    assert.equal(parentFolder("C:/Users/me"), "C:/Users");
+    assert.equal(parentFolder("C:/Users"), "C:/");
+    assert.equal(parentFolder("C:"), null);
+  });
+
+  test("keeps a leading double slash so a UNC server stays a server", () => {
+    assert.equal(parentFolder("//server/share"), "//server");
+  });
+
+  test("does not change the path it was given", () => {
+    const given = "/home/me/";
+
+    parentFolder(given);
+
+    assert.equal(given, "/home/me/");
+  });
+});
+
+describe("joinFolder", () => {
+  test("joins a name onto a POSIX folder with one slash", () => {
+    assert.equal(joinFolder("/home/me", "Projects"), "/home/me/Projects");
+    assert.equal(joinFolder("/home/me/", "Projects"), "/home/me/Projects");
+    assert.equal(joinFolder("/", "tmp"), "/tmp");
+  });
+
+  test("keeps a backslash path's separator", () => {
+    assert.equal(joinFolder("C:\\Users\\me", "x"), "C:\\Users\\me\\x");
+    assert.equal(joinFolder("C:\\", "x"), "C:\\x");
+  });
+
+  test("keeps a forward-slash drive's separator", () => {
+    assert.equal(joinFolder("C:/", "x"), "C:/x");
+  });
+
+  test("does not change the folder it was given", () => {
+    const given = "/home/me";
+
+    joinFolder(given, "Projects");
+
+    assert.equal(given, "/home/me");
+  });
+});
+
+describe("folderListing", () => {
+  test("reads the folder from the first line and its folders from the rest", () => {
+    assert.deepEqual(folderListing("/home/me\nProjects/\n.cache/\nREADME.md\n"), {
+      path: "/home/me",
+      names: ["Projects", ".cache"],
+    });
+  });
+
+  test("trims only the CR of CRLF line endings", () => {
+    assert.deepEqual(folderListing("/srv\r\napi/\r\n"), { path: "/srv", names: ["api"] });
+  });
+
+  test("keeps the shell's order instead of sorting the names", () => {
+    assert.deepEqual(folderListing("/x\nb/\na/\nc/\n").names, ["b", "a", "c"]);
+  });
+
+  test("keeps spaces inside a folder name", () => {
+    assert.deepEqual(folderListing("/x\nMy Project/\n").names, ["My Project"]);
+  });
+
+  test("reads empty output as an empty folder with no names", () => {
+    assert.deepEqual(folderListing(""), { path: "", names: [] });
+    assert.deepEqual(folderListing("/\n"), { path: "/", names: [] });
+  });
+
+  test("skips blank, dot, dot-dot and root entries", () => {
+    assert.deepEqual(folderListing("/x\n\n./\n../\n/\nb/\n").names, ["b"]);
+  });
+
+  test("does not change the output it was given", () => {
+    const given = "/home/me\nProjects/\n";
+
+    folderListing(given);
+
+    assert.equal(given, "/home/me\nProjects/\n");
+  });
+});
+
+describe("machineKey", () => {
+  test("treats no machine as the empty key", () => {
+    assert.equal(machineKey(null), "");
+    assert.equal(machineKey(undefined), "");
+    assert.equal(machineKey(""), "");
+  });
+
+  test("is the machine's name otherwise", () => {
+    assert.equal(machineKey("wsl"), "wsl");
+    assert.equal(machineKey("vps"), "vps");
+  });
+});
+
 describe("projectsFromSpaces", () => {
   const space = (over = {}) => ({
     id: "sp-1",
@@ -115,8 +276,8 @@ describe("projectsFromSpaces", () => {
     );
 
     assert.deepEqual(rows, [
-      { key: "/repo/app", name: "app", git: true, space: "sp-1", busy: false },
-      { key: "/work/plain", name: "plain", git: false, space: "sp-2", busy: true },
+      { key: "/repo/app", machine: null, name: "app", git: true, space: "sp-1", busy: false },
+      { key: "/work/plain", machine: null, name: "plain", git: false, space: "sp-2", busy: true },
     ]);
   });
 
@@ -136,7 +297,7 @@ describe("projectsFromSpaces", () => {
     );
   });
 
-  test("skips remote spaces and spaces with neither a cwd nor a folder", () => {
+  test("includes remote spaces and skips spaces with neither a cwd nor a folder", () => {
     const rows = projectsFromSpaces(
       [
         space({ id: "sp-local", cwd: "/repo/local" }),
@@ -147,10 +308,16 @@ describe("projectsFromSpaces", () => {
       null,
     );
 
-    assert.deepEqual(
-      rows.map((r) => r.space),
-      ["sp-local"],
-    );
+    assert.deepEqual(rows, [
+      { key: "/repo/local", machine: null, name: "app", git: true, space: "sp-local", busy: false },
+      { key: "/repo/remote", machine: "vps", name: "app", git: true, space: "sp-remote", busy: false },
+    ]);
+  });
+
+  test("reads a space without a machine as local", () => {
+    const rows = projectsFromSpaces([space({ id: "sp-1", machine: undefined })], null);
+
+    assert.equal(rows[0].machine, null);
   });
 
   test("marks a row busy only when its space is working or blocked", () => {
@@ -172,14 +339,46 @@ describe("projectsFromSpaces", () => {
     const second = space({ id: "sp-second", name: "second", branch: "agent/x", status: "blocked" });
 
     assert.deepEqual(projectsFromSpaces([first, second], null), [
-      { key: "/repo/app", name: "first", git: false, space: "sp-first", busy: false },
+      { key: "/repo/app", machine: null, name: "first", git: false, space: "sp-first", busy: false },
     ]);
     assert.deepEqual(projectsFromSpaces([first, second], "sp-second"), [
-      { key: "/repo/app", name: "second", git: true, space: "sp-second", busy: true },
+      { key: "/repo/app", machine: null, name: "second", git: true, space: "sp-second", busy: true },
     ]);
     assert.deepEqual(projectsFromSpaces([second, first], "sp-first"), [
-      { key: "/repo/app", name: "first", git: false, space: "sp-first", busy: false },
+      { key: "/repo/app", machine: null, name: "first", git: false, space: "sp-first", busy: false },
     ]);
+  });
+
+  test("dedupes one folder on one machine, preferring that machine's active space", () => {
+    const first = space({ id: "sp-first", machine: "wsl", name: "first", branch: null, status: "idle" });
+    const second = space({ id: "sp-second", machine: "wsl", name: "second", branch: "agent/x", status: "blocked" });
+
+    assert.deepEqual(projectsFromSpaces([first, second], null), [
+      { key: "/repo/app", machine: "wsl", name: "first", git: false, space: "sp-first", busy: false },
+    ]);
+    assert.deepEqual(projectsFromSpaces([first, second], "sp-second"), [
+      { key: "/repo/app", machine: "wsl", name: "second", git: true, space: "sp-second", busy: true },
+    ]);
+  });
+
+  test("keeps the same folder on two machines as two rows", () => {
+    const rows = projectsFromSpaces(
+      [
+        space({ id: "sp-local", machine: null, name: "local", cwd: "/repo/app" }),
+        space({ id: "sp-wsl", machine: "wsl", name: "wsl", cwd: "/repo/app" }),
+        space({ id: "sp-vps", machine: "vps", name: "vps", cwd: "/repo/app" }),
+      ],
+      "sp-vps",
+    );
+
+    assert.deepEqual(
+      rows.map((r) => [r.machine, r.space]),
+      [
+        ["vps", "sp-vps"],
+        [null, "sp-local"],
+        ["wsl", "sp-wsl"],
+      ],
+    );
   });
 
   test("puts the active space's row first and keeps the others in space order", () => {
@@ -199,11 +398,27 @@ describe("projectsFromSpaces", () => {
     );
   });
 
+  test("puts a remote active space's row first", () => {
+    const rows = projectsFromSpaces(
+      [
+        space({ id: "sp-a", folder: "/repo/a", cwd: "/repo/a" }),
+        space({ id: "sp-b", machine: "wsl", folder: "/repo/b", cwd: "/repo/b" }),
+        space({ id: "sp-c", machine: "vps", folder: "/repo/c", cwd: "/repo/c" }),
+      ],
+      "sp-c",
+    );
+
+    assert.deepEqual(
+      rows.map((r) => r.space),
+      ["sp-c", "sp-a", "sp-b"],
+    );
+  });
+
   test("keeps space order when no space is active", () => {
     const rows = projectsFromSpaces(
       [
         space({ id: "sp-a", folder: "/repo/a", cwd: "/repo/a", active: false }),
-        space({ id: "sp-b", folder: "/repo/b", cwd: "/repo/b", active: true }),
+        space({ id: "sp-b", machine: "wsl", folder: "/repo/b", cwd: "/repo/b", active: true }),
       ],
       null,
     );
@@ -283,6 +498,160 @@ describe("pickAgent", () => {
     const withTerminal = [...agents, { key: "terminal" }];
     assert.equal(pickAgent(withTerminal, "claude", "codex", "terminal"), "terminal");
     assert.equal(pickAgent(agents, "claude", "codex", "terminal"), "claude");
+  });
+});
+
+describe("plainAgent", () => {
+  const claude = {
+    key: "claude",
+    name: "Claude Code",
+    icon: "icons/claude.svg",
+    tint: false,
+    run: ["claude"],
+    installed: true,
+  };
+
+  test("keeps the five chip fields and drops everything else", () => {
+    assert.deepEqual(plainAgent(claude), {
+      key: "claude",
+      name: "Claude Code",
+      icon: "icons/claude.svg",
+      tint: false,
+      run: ["claude"],
+    });
+    assert.ok(!Object.hasOwn(plainAgent(claude), "installed"));
+  });
+
+  test("reads a missing or non-string icon as null", () => {
+    assert.equal(plainAgent({ key: "x", name: "X", run: ["x"] }).icon, null);
+    assert.equal(plainAgent({ key: "x", name: "X", icon: 42, run: ["x"] }).icon, null);
+  });
+
+  test("coerces the tint to a Boolean", () => {
+    assert.equal(plainAgent({ key: "x", name: "X", tint: "yes", run: ["x"] }).tint, true);
+    assert.equal(plainAgent({ key: "x", name: "X", tint: 0, run: ["x"] }).tint, false);
+    assert.equal(plainAgent({ key: "x", name: "X", run: ["x"] }).tint, false);
+  });
+
+  test("keeps the run command and every argument", () => {
+    assert.deepEqual(plainAgent({ key: "x", name: "X", run: ["x", "--flag", "a b"] }).run, ["x", "--flag", "a b"]);
+    assert.deepEqual(plainAgent({ key: "x", name: "X", run: "x" }).run, []);
+  });
+
+  test("does not change the agent it was given", () => {
+    const input = { ...claude, run: [...claude.run] };
+
+    plainAgent(input);
+
+    assert.deepEqual(input, claude);
+  });
+});
+
+describe("agentLists", () => {
+  const claude = {
+    key: "claude",
+    name: "Claude Code",
+    icon: "icons/claude.svg",
+    tint: false,
+    run: ["claude"],
+    installed: true,
+  };
+  const claudePlain = { key: "claude", name: "Claude Code", icon: "icons/claude.svg", tint: false, run: ["claude"] };
+  const codex = { key: "codex", name: "Codex", icon: "icons/codex.svg", tint: true, run: ["codex"] };
+  const codexPlain = { key: "codex", name: "Codex", icon: "icons/codex.svg", tint: true, run: ["codex"] };
+
+  test("migrates the old stored array to the local machine's list", () => {
+    assert.deepEqual(agentLists([claude, codex]), { "": [claudePlain, codexPlain] });
+  });
+
+  test("drops invalid agents from a legacy array", () => {
+    const list = [null, "text", 42, [], {}, { name: "no key" }, { key: "x", name: "X", run: "x" }, claude];
+
+    assert.deepEqual(agentLists(list), { "": [claudePlain] });
+  });
+
+  test("reads an object map of machines, plainifying every list", () => {
+    const lists = agentLists({ "": [claude], wsl: [codex], vps: "not a list", bad: null });
+
+    assert.deepEqual(lists, { "": [claudePlain], wsl: [codexPlain] });
+  });
+
+  test("drops an invalid agent from a machine's list", () => {
+    assert.deepEqual(agentLists({ wsl: [null, codex, 3] }), { wsl: [codexPlain] });
+  });
+
+  test("reads a missing or garbage stored value as no lists", () => {
+    for (const value of [undefined, null, "not json", 42, true, {}]) {
+      assert.deepEqual(agentLists(value), {}, `value: ${JSON.stringify(value)}`);
+    }
+  });
+
+  test("does not change the stored array it was given", () => {
+    const stored = Object.freeze([Object.freeze({ ...claude, run: Object.freeze([...claude.run]) })]);
+
+    const lists = agentLists(stored);
+
+    assert.deepEqual(lists, { "": [claudePlain] });
+    assert.deepEqual(stored, [claude]);
+  });
+
+  test("does not change the stored machine map it was given", () => {
+    const stored = { wsl: [claude] };
+
+    const lists = agentLists(stored);
+
+    assert.deepEqual(lists, { wsl: [claudePlain] });
+    assert.deepEqual(stored, { wsl: [claude] });
+  });
+});
+
+describe("agentsOn", () => {
+  const local = [{ key: "claude" }];
+  const wsl = [{ key: "codex" }];
+  const lists = { "": local, wsl };
+
+  test("returns the list for a machine, or an empty list when it has none", () => {
+    assert.deepEqual(agentsOn(lists, "wsl"), wsl);
+    assert.deepEqual(agentsOn(lists, "vps"), []);
+    assert.deepEqual(agentsOn({}, "wsl"), []);
+  });
+
+  test("reads no machine as the local list", () => {
+    assert.deepEqual(agentsOn(lists, null), local);
+    assert.deepEqual(agentsOn(lists, undefined), local);
+  });
+});
+
+describe("setAgentsOn", () => {
+  const local = [{ key: "claude", name: "Claude", icon: null, tint: false, run: ["claude"] }];
+  const wsl = [{ key: "codex", name: "Codex", icon: null, tint: false, run: ["codex"] }];
+  const vps = [{ key: "gemini", name: "Gemini", tint: true, run: ["gemini"], installed: true }];
+  const vpsPlain = { key: "gemini", name: "Gemini", icon: null, tint: true, run: ["gemini"] };
+
+  test("sets a machine's list and keeps the other machines", () => {
+    const lists = { "": local, wsl };
+
+    assert.deepEqual(setAgentsOn(lists, "vps", vps), { "": local, wsl, vps: [vpsPlain] });
+  });
+
+  test("replaces a machine's list", () => {
+    const lists = { "": local, wsl };
+
+    assert.deepEqual(setAgentsOn(lists, "wsl", vps), { "": local, wsl: [vpsPlain] });
+  });
+
+  test("sets the local list when there is no machine", () => {
+    assert.deepEqual(setAgentsOn({}, null, vps), { "": [vpsPlain] });
+    assert.deepEqual(setAgentsOn({}, undefined, vps), { "": [vpsPlain] });
+  });
+
+  test("does not change the map it was given", () => {
+    const lists = Object.freeze({ "": Object.freeze([...local]) });
+
+    const next = setAgentsOn(lists, "wsl", vps);
+
+    assert.deepEqual(lists, { "": local });
+    assert.deepEqual(next, { "": local, wsl: [vpsPlain] });
   });
 });
 
@@ -449,6 +818,98 @@ describe("launchPlan with a task-taking agent", () => {
   });
 });
 
+describe("launchPlan for a remote project", () => {
+  const agent = { key: "claude", name: "Claude", run: ["claude", "--flag"] };
+  const project = { key: "/repo/app", machine: "wsl", name: "app", git: true, space: "sp-1", at: 0 };
+  const noSpace = { key: "/repo/app", machine: "wsl", name: "app", git: true, space: null, at: 0 };
+
+  test("opens the worktree's space on the project's machine", () => {
+    assert.deepEqual(
+      launchPlan({ project, agent, task: "Fix it", worktree: true, path: "/home/me/.herdr/worktrees/app/agent-fix-it" }),
+      [
+        ["space.new", {
+          folder: "/home/me/.herdr/worktrees/app/agent-fix-it",
+          machine: "wsl",
+          tab: "Claude",
+          argv: ["claude", "--flag"],
+          task: "Fix it",
+        }],
+      ],
+    );
+  });
+
+  test("opens a space on the project's machine when it has no space", () => {
+    assert.deepEqual(launchPlan({ project: noSpace, agent, task: "Fix it", worktree: false }), [
+      ["space.new", {
+        folder: "/repo/app",
+        machine: "wsl",
+        tab: "Claude",
+        argv: ["claude", "--flag"],
+        task: "Fix it",
+      }],
+    ]);
+  });
+
+  test("puts the machine on the terminal's new space", () => {
+    assert.deepEqual(launchPlan({ project: noSpace, agent: TERMINAL, task: "", worktree: false }), [
+      ["space.new", { folder: "/repo/app", machine: "wsl" }],
+    ]);
+    assert.deepEqual(
+      launchPlan({ project, agent: TERMINAL, task: "", worktree: true, path: "/home/me/.herdr/worktrees/app/agent-x" }),
+      [["space.new", { folder: "/home/me/.herdr/worktrees/app/agent-x", machine: "wsl" }]],
+    );
+  });
+
+  test("keeps a task-taking agent's prompt with the machine", () => {
+    const opencode = { key: "opencode", name: "OpenCode", run: ["opencode"] };
+
+    assert.deepEqual(
+      launchPlan({ project, agent: opencode, task: " ahoj ", worktree: true, path: "/h/wt" }),
+      [["space.new", { folder: "/h/wt", machine: "wsl", tab: "OpenCode", argv: ["opencode", "--prompt", "ahoj"] }]],
+    );
+  });
+
+  test("does not put a machine on a tab in an existing space", () => {
+    const plan = launchPlan({ project, agent, task: "Fix it", worktree: false });
+
+    assert.deepEqual(plan, [
+      ["space.select", { id: "sp-1" }],
+      ["tab.new", {
+        name: "Claude",
+        space: "sp-1",
+        folder: "/repo/app",
+        argv: ["claude", "--flag"],
+        task: "Fix it",
+      }],
+    ]);
+    for (const [command, args] of plan) {
+      assert.ok(!Object.hasOwn(args, "machine"), `${command} must not carry a machine`);
+    }
+  });
+
+  test("does not put a machine on the terminal's tab in an existing space", () => {
+    const plan = launchPlan({ project, agent: TERMINAL, task: "", worktree: false });
+
+    assert.deepEqual(plan, [
+      ["space.select", { id: "sp-1" }],
+      ["tab.new", { space: "sp-1", folder: "/repo/app" }],
+    ]);
+    for (const [command, args] of plan) {
+      assert.ok(!Object.hasOwn(args, "machine"), `${command} must not carry a machine`);
+    }
+  });
+
+  test("leaves a local plan without a machine key", () => {
+    for (const machine of [null, undefined, ""]) {
+      const plan = launchPlan({ project: { ...project, machine }, agent, task: "Fix it", worktree: false });
+
+      for (const [command, args] of plan) {
+        assert.ok(!Object.hasOwn(args, "machine"), `${command} with machine ${JSON.stringify(machine)}`);
+      }
+    }
+  });
+});
+
 describe("parseRepo", () => {
   test("reads the main checkout from a plain repo's two git lines", () => {
     assert.deepEqual(parseRepo("/a/repo\n/a/repo/.git\n"), {
@@ -475,35 +936,44 @@ describe("parseRepo", () => {
   });
 });
 
-describe("agent discovery without knownAgents", () => {
-  test("the probe names each agent's command once, safely quoted for sh", () => {
-    const [cmd, args] = agentProbe();
-    assert.equal(cmd, "sh");
-    assert.equal(args[0], "-c");
-    for (const a of AGENTS) assert.match(args[1], new RegExp(`'${a.run[0]}'`));
-  });
-
-  test("keeps the agents whose command the probe found, in table order", () => {
-    const stdout = "/usr/bin/opencode\n/home/x/.local/bin/claude\n/opt/agy\n";
-    assert.deepEqual(installedAgents(stdout).map((a) => a.key), ["claude", "opencode", "antigravity"]);
-  });
-
-  test("matches the command, not a path that merely contains it", () => {
-    assert.deepEqual(installedAgents("/home/claude/bin/opencode\n").map((a) => a.key), ["opencode"]);
-  });
-
-  test("finds nothing in empty output", () => {
-    assert.deepEqual(installedAgents(""), []);
-  });
-});
-
 describe("readRecent", () => {
-  const entry = (folder, name, git = false) => ({ folder, name, git });
+  const entry = (folder, name, git = false, machine = null) => ({ folder, name, git, machine });
 
-  test("reads a stored list of projects as it is", () => {
-    const stored = [entry("/work/api", "api", true), entry("/work/site", "site", false)];
+  test("reads a stored list of projects with its machines", () => {
+    const stored = [entry("/work/api", "api", true, "wsl"), entry("/work/site", "site", false)];
 
     assert.deepEqual(readRecent(stored), stored);
+  });
+
+  test("reads an entry without a machine as local", () => {
+    assert.deepEqual(readRecent([{ folder: "/work/api", name: "api", git: true }]), [
+      { folder: "/work/api", machine: null, name: "api", git: true },
+    ]);
+  });
+
+  test("reads a garbage machine as local instead of dropping the entry", () => {
+    const list = readRecent([
+      { folder: "/a", name: "a", machine: 42 },
+      { folder: "/b", name: "b", machine: "" },
+      { folder: "/c", name: "c", machine: ["wsl"] },
+      { folder: "/d", name: "d", machine: true },
+    ]);
+
+    assert.deepEqual(
+      list.map((e) => [e.folder, e.machine]),
+      [
+        ["/a", null],
+        ["/b", null],
+        ["/c", null],
+        ["/d", null],
+      ],
+    );
+  });
+
+  test("falls back to the folder's last segment for a missing name", () => {
+    assert.deepEqual(readRecent([{ folder: "C:\\work\\api", machine: "wsl" }]), [
+      { folder: "C:\\work\\api", machine: "wsl", name: "api", git: false },
+    ]);
   });
 
   test("reads a missing or garbage stored value as an empty list", () => {
@@ -514,7 +984,7 @@ describe("readRecent", () => {
 
   test("drops invalid entries and keeps the valid ones in order", () => {
     const good = entry("/work/api", "api", true);
-    const also = entry("/work/site", "site", false);
+    const also = entry("/work/site", "site", false, "wsl");
 
     const list = readRecent([
       null,
@@ -533,11 +1003,136 @@ describe("readRecent", () => {
   });
 });
 
+describe("readFavorites", () => {
+  const entry = (folder, name, git = false, machine = null) => ({ folder, name, git, machine });
+
+  test("reads a stored list of favourite folders with their machines", () => {
+    const stored = [entry("/work/api", "api", true, "wsl"), entry("/work/site", "site")];
+
+    assert.deepEqual(readFavorites(stored), stored);
+  });
+
+  test("reads a missing or garbage stored value as an empty list and drops invalid entries", () => {
+    for (const value of [undefined, null, "not json", 42, true, {}, { folder: "/work/api" }]) {
+      assert.deepEqual(readFavorites(value), [], `value: ${JSON.stringify(value)}`);
+    }
+    assert.deepEqual(readFavorites([null, "text", 42, {}, { name: "no folder" }, entry("/a", "a")]), [
+      entry("/a", "a"),
+    ]);
+  });
+});
+
+describe("toggleFavorite", () => {
+  const entry = (folder, name = folder.split("/").pop(), git = false, machine = null) => ({
+    folder,
+    machine,
+    name,
+    git,
+  });
+
+  test("adds a new favourite at the front, normalized", () => {
+    const list = toggleFavorite([entry("/work/api", "api")], { folder: "/work/site", name: "site", git: 1 });
+
+    assert.deepEqual(list, [entry("/work/site", "site", true), entry("/work/api", "api")]);
+  });
+
+  test("reads a missing machine as local", () => {
+    assert.deepEqual(toggleFavorite([], { folder: "/work/api", name: "api", git: true }), [
+      entry("/work/api", "api", true),
+    ]);
+  });
+
+  test("removes a stored favourite and keeps the order of the rest", () => {
+    const before = [entry("/work/api"), entry("/work/site"), entry("/work/blog")];
+
+    assert.deepEqual(toggleFavorite(before, entry("/work/site")), [entry("/work/api"), entry("/work/blog")]);
+  });
+
+  test("matches the machine when it removes a favourite", () => {
+    const before = [entry("/repo/app", "app", false, null), entry("/repo/app", "app", true, "wsl")];
+
+    assert.deepEqual(toggleFavorite(before, entry("/repo/app", "app", true, "wsl")), [
+      entry("/repo/app", "app", false, null),
+    ]);
+  });
+
+  test("keeps the same folder on two machines as two entries", () => {
+    const list = toggleFavorite([entry("/repo/app", "app", false, null)], entry("/repo/app", "app", true, "wsl"));
+
+    assert.deepEqual(list, [entry("/repo/app", "app", true, "wsl"), entry("/repo/app", "app", false, null)]);
+  });
+
+  test("caps the list at 50 favourites by default, dropping the oldest", () => {
+    let list = [];
+    for (let i = 0; i < 55; i++) list = toggleFavorite(list, entry(`/work/p${i}`));
+
+    assert.equal(list.length, 50);
+    assert.equal(list[0].folder, "/work/p54");
+    assert.equal(list[49].folder, "/work/p5");
+  });
+
+  test("takes the cap as an argument", () => {
+    const list = toggleFavorite([entry("/a"), entry("/b"), entry("/c")], entry("/d"), 2);
+
+    assert.deepEqual(
+      list.map((f) => f.folder),
+      ["/d", "/a"],
+    );
+  });
+
+  test("does not change the list it was given", () => {
+    const before = Object.freeze([Object.freeze(entry("/work/api"))]);
+
+    const list = toggleFavorite(before, entry("/work/site"));
+
+    assert.equal(before.length, 1);
+    assert.equal(list.length, 2);
+    assert.notEqual(list, before);
+  });
+});
+
+describe("pickFavorite", () => {
+  const starred = (folder) => ({ key: folder, machine: null, starred: true, favorite: { folder, machine: null } });
+  const plain = (folder) => ({ key: folder, machine: null });
+
+  test("picks the first starred row, skipping rows without a star", () => {
+    const rows = [plain("/a"), starred("/b"), plain("/c"), starred("/d")];
+
+    assert.equal(pickFavorite(rows, 1).key, "/b");
+  });
+
+  test("picks the nth starred row", () => {
+    const rows = [plain("/a"), starred("/b"), plain("/c"), starred("/d")];
+
+    assert.equal(pickFavorite(rows, 2).key, "/d");
+  });
+
+  test("returns null out of range or when nothing is starred", () => {
+    const rows = [plain("/a"), starred("/b")];
+
+    assert.equal(pickFavorite(rows, 0), null);
+    assert.equal(pickFavorite(rows, 2), null);
+    assert.equal(pickFavorite([], 1), null);
+    assert.equal(pickFavorite([plain("/a")], 1), null);
+  });
+});
+
 describe("rememberProject", () => {
-  const entry = (folder, name = folder.split("/").pop(), git = false) => ({ folder, name, git });
+  const entry = (folder, name = folder.split("/").pop(), git = false, machine = null) => ({
+    folder,
+    name,
+    git,
+    machine,
+  });
 
   test("puts the project first in an empty list", () => {
     assert.deepEqual(rememberProject([], entry("/work/api", "api", true)), [entry("/work/api", "api", true)]);
+  });
+
+  test("reads a missing machine as local", () => {
+    assert.deepEqual(rememberProject([], { folder: "/work/api", name: "api", git: true }), [
+      entry("/work/api", "api", true),
+    ]);
   });
 
   test("puts the newest project first", () => {
@@ -549,12 +1144,24 @@ describe("rememberProject", () => {
     );
   });
 
-  test("dedupes by folder, moving the project to the front with its new values", () => {
+  test("dedupes by folder on one machine, moving the project to the front with its new values", () => {
     const before = [entry("/work/api", "api", false), entry("/work/site"), entry("/work/blog")];
 
     const list = rememberProject(before, entry("/work/site", "site", true));
 
     assert.deepEqual(list, [entry("/work/site", "site", true), entry("/work/api", "api", false), entry("/work/blog")]);
+  });
+
+  test("keeps the same folder on two machines as two entries", () => {
+    const before = [entry("/repo/app", "app", false, null), entry("/work/blog")];
+
+    const list = rememberProject(before, entry("/repo/app", "app", true, "wsl"));
+
+    assert.deepEqual(list, [
+      entry("/repo/app", "app", true, "wsl"),
+      entry("/repo/app", "app", false, null),
+      entry("/work/blog"),
+    ]);
   });
 
   test("caps the list at 30 projects by default, dropping the oldest", () => {
@@ -586,9 +1193,29 @@ describe("rememberProject", () => {
 });
 
 describe("projectList", () => {
-  const row = (over = {}) => ({ key: "/repo/app", name: "app", git: true, space: "sp-1", busy: false, ...over });
-  const space = (over = {}) => ({ id: "sp-1", name: "app", folder: "/repo/app", cwd: "/repo/app", machine: null, ...over });
-  const hist = (folder, name = folder.split("/").pop(), git = false) => ({ folder, name, git });
+  const row = (over = {}) => ({
+    key: "/repo/app",
+    machine: null,
+    name: "app",
+    git: true,
+    space: "sp-1",
+    busy: false,
+    ...over,
+  });
+  const space = (over = {}) => ({
+    id: "sp-1",
+    name: "app",
+    folder: "/repo/app",
+    cwd: "/repo/app",
+    machine: null,
+    ...over,
+  });
+  const hist = (folder, name = folder.split("/").pop(), git = false, machine = null) => ({
+    folder,
+    machine,
+    name,
+    git,
+  });
 
   test("lists the open spaces first, then remembered projects without a space", () => {
     const rows = projectList(
@@ -597,11 +1224,17 @@ describe("projectList", () => {
     );
 
     assert.deepEqual(rows, [
-      { key: "/a", name: "a", git: true, space: "sp-a", busy: false },
-      { key: "/b", name: "b", git: true, space: "sp-b", busy: false },
-      { key: "/work/api", name: "api", git: true, space: null, busy: false },
-      { key: "/work/site", name: "site", git: false, space: null, busy: false },
+      { key: "/a", machine: null, name: "a", git: true, space: "sp-a", busy: false },
+      { key: "/b", machine: null, name: "b", git: true, space: "sp-b", busy: false },
+      { key: "/work/api", machine: null, name: "api", git: true, space: null, busy: false },
+      { key: "/work/site", machine: null, name: "site", git: false, space: null, busy: false },
     ]);
+  });
+
+  test("passes a remote space row through with its machine", () => {
+    const spaceRows = [row({ key: "/srv/app", machine: "vps", name: "app", space: "sp-9" })];
+
+    assert.deepEqual(projectList(spaceRows, []), spaceRows);
   });
 
   test("keeps remembered projects in most recently started order", () => {
@@ -620,7 +1253,9 @@ describe("projectList", () => {
       [space({ cwd: "/repo/app/packages/web" })],
     );
 
-    assert.deepEqual(rows, [{ key: "/repo/app/packages/web", name: "web", git: true, space: "sp-1", busy: true }]);
+    assert.deepEqual(rows, [
+      { key: "/repo/app/packages/web", machine: null, name: "web", git: true, space: "sp-1", busy: true },
+    ]);
   });
 
   test("merges a remembered project into the open space whose folder matches, not its live cwd", () => {
@@ -631,10 +1266,63 @@ describe("projectList", () => {
     );
 
     assert.deepEqual(
-      rows.map((r) => [r.key, r.space]),
+      rows.map((r) => [r.key, r.machine, r.space]),
       [
-        ["/repo/app/packages/web", "sp-1"],
-        ["/work/api", null],
+        ["/repo/app/packages/web", null, "sp-1"],
+        ["/work/api", null, null],
+      ],
+    );
+  });
+
+  test("keeps a local history entry next to a remote space with the same folder", () => {
+    const rows = projectList(
+      [row({ key: "/repo/app", machine: "wsl", name: "app", space: "sp-1" })],
+      [hist("/repo/app", "app")],
+      [space({ id: "sp-1", machine: "wsl", folder: "/repo/app", cwd: "/repo/app" })],
+    );
+
+    assert.deepEqual(rows, [
+      { key: "/repo/app", machine: "wsl", name: "app", git: true, space: "sp-1", busy: false },
+      { key: "/repo/app", machine: null, name: "app", git: false, space: null, busy: false },
+    ]);
+  });
+
+  test("swallows a remembered project in a matching folder on the same machine", () => {
+    const rows = projectList(
+      [row({ key: "/repo/app/packages/web", machine: "wsl", space: "sp-1" })],
+      [hist("/repo/app", "app", true, "wsl"), hist("/repo/app", "app", true, null)],
+      [space({ id: "sp-1", machine: "wsl", folder: "/repo/app", cwd: "/repo/app/packages/web" })],
+    );
+
+    assert.deepEqual(rows, [
+      { key: "/repo/app/packages/web", machine: "wsl", name: "app", git: true, space: "sp-1", busy: false },
+      { key: "/repo/app", machine: null, name: "app", git: true, space: null, busy: false },
+    ]);
+  });
+
+  test("does not let a remote space swallow a local entry that only matches its key", () => {
+    const rows = projectList(
+      [row({ key: "/repo/app", machine: "wsl", space: "sp-1" })],
+      [hist("/repo/app", "app", true, null)],
+    );
+
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.machine, r.space]),
+      [
+        ["/repo/app", "wsl", "sp-1"],
+        ["/repo/app", null, null],
+      ],
+    );
+  });
+
+  test("keeps remembered projects with the same folder on different machines", () => {
+    const rows = projectList([], [hist("/repo/app", "app", true, "wsl"), hist("/repo/app", "app", false)]);
+
+    assert.deepEqual(
+      rows.map((r) => [r.machine, r.key, r.git]),
+      [
+        ["wsl", "/repo/app", true],
+        [null, "/repo/app", false],
       ],
     );
   });
@@ -656,18 +1344,239 @@ describe("projectList", () => {
   });
 });
 
+describe("projectList with favourites", () => {
+  const row = (over = {}) => ({
+    key: "/repo/app",
+    machine: null,
+    name: "app",
+    git: true,
+    space: "sp-1",
+    busy: false,
+    ...over,
+  });
+  const space = (over = {}) => ({
+    id: "sp-1",
+    name: "app",
+    folder: "/repo/app",
+    cwd: "/repo/app",
+    machine: null,
+    ...over,
+  });
+  const hist = (folder, name = folder.split("/").pop(), git = false, machine = null) => ({
+    folder,
+    machine,
+    name,
+    git,
+  });
+  const fav = (folder, name = folder.split("/").pop(), git = true, machine = null) => ({
+    folder,
+    machine,
+    name,
+    git,
+  });
+
+  test("marks a favourite that matches an open space and moves it first", () => {
+    const rows = projectList(
+      [
+        row({ key: "/repo/site", name: "site", space: "sp-2" }),
+        row({ key: "/repo/app", name: "app", space: "sp-1", busy: true }),
+      ],
+      [],
+      [],
+      [fav("/repo/app", "app", true)],
+    );
+
+    assert.deepEqual(rows, [
+      {
+        key: "/repo/app",
+        machine: null,
+        name: "app",
+        git: true,
+        space: "sp-1",
+        busy: true,
+        starred: true,
+        favorite: { folder: "/repo/app", machine: null },
+      },
+      { key: "/repo/site", machine: null, name: "site", git: true, space: "sp-2", busy: false },
+    ]);
+  });
+
+  test("marks a favourite that matches only the space's folder, not its live key", () => {
+    const rows = projectList(
+      [row({ key: "/repo/app/packages/web", name: "app", space: "sp-1" })],
+      [],
+      [space({ id: "sp-1", folder: "/repo/app", cwd: "/repo/app/packages/web" })],
+      [fav("/repo/app", "app", true)],
+    );
+
+    assert.deepEqual(rows, [
+      {
+        key: "/repo/app/packages/web",
+        machine: null,
+        name: "app",
+        git: true,
+        space: "sp-1",
+        busy: false,
+        starred: true,
+        favorite: { folder: "/repo/app", machine: null },
+      },
+    ]);
+  });
+
+  test("marks a favourite that matches a remembered project and moves it first", () => {
+    const rows = projectList(
+      [],
+      [hist("/work/site", "site", false), hist("/work/api", "api", true)],
+      [],
+      [fav("/work/api", "api", true)],
+    );
+
+    assert.deepEqual(rows, [
+      {
+        key: "/work/api",
+        machine: null,
+        name: "api",
+        git: true,
+        space: null,
+        busy: false,
+        starred: true,
+        favorite: { folder: "/work/api", machine: null },
+      },
+      { key: "/work/site", machine: null, name: "site", git: false, space: null, busy: false },
+    ]);
+  });
+
+  test("adds a favourite with no matching row as a new project first", () => {
+    const rows = projectList(
+      [row({ key: "/a", name: "a", space: "sp-a" })],
+      [],
+      [],
+      [fav("/work/new", "new", true), fav("/srv/api", "api", false, "vps")],
+    );
+
+    assert.deepEqual(rows, [
+      {
+        key: "/work/new",
+        machine: null,
+        name: "new",
+        git: true,
+        space: null,
+        busy: false,
+        starred: true,
+        favorite: { folder: "/work/new", machine: null },
+      },
+      {
+        key: "/srv/api",
+        machine: "vps",
+        name: "api",
+        git: false,
+        space: null,
+        busy: false,
+        starred: true,
+        favorite: { folder: "/srv/api", machine: "vps" },
+      },
+      { key: "/a", machine: null, name: "a", git: true, space: "sp-a", busy: false },
+    ]);
+  });
+
+  test("stars only the machine the favourite belongs to", () => {
+    const rows = projectList(
+      [
+        row({ key: "/repo/app", machine: null, name: "app", space: "sp-local" }),
+        row({ key: "/repo/app", machine: "wsl", name: "app", space: "sp-wsl" }),
+      ],
+      [],
+      [],
+      [fav("/repo/app", "app", true, "wsl")],
+    );
+
+    assert.deepEqual(rows, [
+      {
+        key: "/repo/app",
+        machine: "wsl",
+        name: "app",
+        git: true,
+        space: "sp-wsl",
+        busy: false,
+        starred: true,
+        favorite: { folder: "/repo/app", machine: "wsl" },
+      },
+      { key: "/repo/app", machine: null, name: "app", git: true, space: "sp-local", busy: false },
+    ]);
+    assert.ok(!Object.hasOwn(rows[1], "starred"), "an unstarred row must not carry a starred key");
+  });
+
+  test("puts several favourites first in their stored order", () => {
+    const rows = projectList(
+      [
+        row({ key: "/a", name: "a", space: "sp-a" }),
+        row({ key: "/b", name: "b", space: "sp-b" }),
+        row({ key: "/c", name: "c", space: "sp-c" }),
+        row({ key: "/d", name: "d", space: "sp-d" }),
+      ],
+      [],
+      [],
+      [fav("/c", "c", true), fav("/a", "a", true)],
+    );
+
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.starred]),
+      [
+        ["/c", true],
+        ["/a", true],
+        ["/b", undefined],
+        ["/d", undefined],
+      ],
+    );
+  });
+
+  test("shows a favourite once when it matches both an open space and the history", () => {
+    const rows = projectList(
+      [row({ key: "/repo/app/packages/web", name: "app", space: "sp-1" })],
+      [hist("/repo/app", "app", true), hist("/repo/work/api", "api", true)],
+      [space({ id: "sp-1", folder: "/repo/app", cwd: "/repo/app/packages/web" })],
+      [fav("/repo/app", "app", true)],
+    );
+
+    assert.deepEqual(rows, [
+      {
+        key: "/repo/app/packages/web",
+        machine: null,
+        name: "app",
+        git: true,
+        space: "sp-1",
+        busy: false,
+        starred: true,
+        favorite: { folder: "/repo/app", machine: null },
+      },
+      { key: "/repo/work/api", machine: null, name: "api", git: true, space: null, busy: false },
+    ]);
+  });
+
+  test("leaves the list unchanged when there are no favourites", () => {
+    const spaceRows = [
+      row({ key: "/a", name: "a", space: "sp-a" }),
+      row({ key: "/b", machine: "wsl", name: "b", space: "sp-b" }),
+    ];
+    const recent = [hist("/work/api", "api", true), hist("/a", "a")];
+    const spaces = [space({ id: "sp-b", machine: "wsl", folder: "/repo/b", cwd: "/b" })];
+
+    assert.deepEqual(projectList(spaceRows, recent, spaces, []), projectList(spaceRows, recent, spaces));
+  });
+});
+
 describe("filterProjects", () => {
   const rows = [
-    { key: "/home/me/work/Příliš", name: "Příliš", git: true, space: "sp-1", busy: false },
-    { key: "/home/me/projects/api", name: "api", git: true, space: null, busy: false },
-    { key: "/srv/Site", name: "Site", git: false, space: null, busy: false },
+    { key: "/home/me/work/Příliš", machine: null, name: "Příliš", git: true, space: "sp-1", busy: false },
+    { key: "/home/me/projects/api", machine: null, name: "api", git: true, space: null, busy: false },
+    { key: "/srv/Site", machine: null, name: "Site", git: false, space: null, busy: false },
   ];
   const home = "/home/me";
   const names = (list) => list.map((r) => r.name);
 
-  test("returns every row for an empty or blank filter", () => {
-    assert.deepEqual(filterProjects(rows, "", home), rows);
-    assert.deepEqual(filterProjects(rows, "   ", home), rows);
+  test("returns the same rows array for an empty or blank filter", () => {
+    assert.equal(filterProjects(rows, "", home), rows);
+    assert.equal(filterProjects(rows, "   ", home), rows);
   });
 
   test("matches a substring of the name, ignoring case", () => {
@@ -694,6 +1603,28 @@ describe("filterProjects", () => {
     assert.deepEqual(filterProjects(rows, "~/srv", home), []);
   });
 
+  test("matches a remote row's machine name, ignoring case and diacritics", () => {
+    const remoteRows = [
+      { key: "/srv/app", machine: "wsl", name: "app", git: true, space: null, busy: false },
+      { key: "/srv/site", machine: "vps-příliš", name: "site", git: true, space: null, busy: false },
+      { key: "/srv/local", machine: null, name: "local", git: true, space: null, busy: false },
+    ];
+
+    assert.deepEqual(names(filterProjects(remoteRows, "wsl", home)), ["app"]);
+    assert.deepEqual(names(filterProjects(remoteRows, "VPS-PRILIS", home)), ["site"]);
+    assert.deepEqual(names(filterProjects(remoteRows, "WSL", home)), ["app"]);
+  });
+
+  test("does not read ~ into a remote row with the same absolute path", () => {
+    const mixed = [
+      { key: "/home/me/projects/api", machine: null, name: "api", git: true, space: null, busy: false },
+      { key: "/home/me/projects/api", machine: "wsl", name: "api-remote", git: true, space: null, busy: false },
+    ];
+
+    assert.deepEqual(names(filterProjects(mixed, "~/projects", home)), ["api"]);
+    assert.deepEqual(names(filterProjects(mixed, "me/projects", home)), ["api", "api-remote"]);
+  });
+
   test("keeps the order of the rows and returns nothing when nothing matches", () => {
     assert.deepEqual(names(filterProjects(rows, "i", home)), ["Příliš", "api", "Site"]);
     assert.deepEqual(filterProjects(rows, "zzz", home), []);
@@ -713,10 +1644,6 @@ describe("TERMINAL", () => {
     assert.equal(TERMINAL.icon, "icons/shell.svg");
     assert.equal(TERMINAL.tint, true);
     assert.deepEqual(TERMINAL.run, []);
-  });
-
-  test("is not part of the probe table", () => {
-    assert.ok(!AGENTS.some((a) => a.key === "terminal"));
   });
 });
 

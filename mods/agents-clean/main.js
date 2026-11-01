@@ -7,6 +7,7 @@ import { agents, terminals, panes, focused, spaces, run, home, notify, theme, sh
 import { settleInTurn } from "./settle.js";
 import { git, settleTab, tabBusy } from "./close.js";
 import { terminalRows } from "./terminals.js";
+import { rememberSpaces } from "./recent.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -19,6 +20,15 @@ function find(node, id) {
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
+
+// The folder a space shows there: its first tab's live cwd, else where it was made.
+function liveFolder(s, cwdByTab) {
+  for (const tab of s.tabs ?? []) {
+    const cwd = cwdByTab.get(tab.id);
+    if (cwd) return cwd;
+  }
+  return s.folder;
+}
 
 // To the rail (on macOS wide enough for the traffic lights), or back to the width it had.
 function toggleSidebar() {
@@ -87,6 +97,32 @@ export default class Agents extends View {
     this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
     this.pins = JSON.parse(localStorage.getItem("pins") ?? "[]");
     cx.timer.every(30000, (cx) => cx.notify());
+    cx.timer.every(1000, () => this.rememberOpenSpaces());
+  }
+
+  // Every open space's folder joins New agent's history, so closing a space here
+  // does not lose it from that dialog. Only writes when something new appears.
+  rememberOpenSpaces() {
+    try {
+      const cwdByTab = new Map();
+      for (const pane of panes()) {
+        if (pane.cwd && !cwdByTab.has(pane.tab)) cwdByTab.set(pane.tab, pane.cwd);
+      }
+      const list = spaces();
+      const active = list.find((s) => s.active);
+      const ordered = active ? [active, ...list.filter((s) => s !== active)] : list;
+      const rows = ordered.map((s) => ({
+        key: liveFolder(s, cwdByTab),
+        machine: s.machine ?? null,
+        name: s.name,
+        git: Boolean(s.branch),
+      }));
+      const next = rememberSpaces(shared("new-agent.recent"), rows);
+      if (next) setShared("new-agent.recent", next);
+    } catch {
+      // The history is a convenience; a closed window or a bad machine must not
+      // break the sidebar.
+    }
   }
 
   // Stamps agents whose state changed. Done and idle count as one: looking at a
@@ -295,7 +331,7 @@ export default class Agents extends View {
                 .text_size(11)
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
-                .on_click(() => openOverlay({ mod: "new-agent", kind: "dialog", width: 560, height: 560, props: { agent: "terminal" } }))
+                .on_click(() => openOverlay({ mod: "new-agent", kind: "dialog", width: 720, height: 700, props: { agent: "terminal" } }))
                 .tooltip("New terminal")
                 .child(svg("mods/workspace-chrome/plus.svg").size(14)),
             ),
@@ -615,7 +651,7 @@ export default class Agents extends View {
                     .text_size(11)
                     .text_color(t.dim)
                     .hover((s) => s.text_color(t.foreground))
-                    .on_click(() => openOverlay({ mod: "new-agent", kind: "dialog", width: 560, height: 560 }))
+                    .on_click(() => openOverlay({ mod: "new-agent", kind: "dialog", width: 720, height: 700 }))
                     .tooltip("New agent (ctrl-shift-a)")
                     .child(svg("mods/workspace-chrome/plus.svg").size(14)),
                 )

@@ -105,57 +105,118 @@ left out; order is spaces, then tabs.
 ## New agent dialog
 
 Mod `new-agent`, opened by `ctrl-shift-a` (`mod.open:new-agent`) or the `+`: a
-560×560 dialog with a project filter input, a list of projects, agent chips
+720×700 dialog with a project filter input, a list of projects, agent chips
 with a *Set as default* link, a task input, a New worktree checkbox with a
 branch input and a Start button.
 
-- The list is projects, one row per folder. The open local spaces come first
-  (`projectsFromSpaces`): a space is keyed by the live `cwd` of its first tab,
-  else its `folder`, and the active space comes first. Spaces on other machines
-  are left out. Then the remembered projects without a space
+- The list is projects, one row per folder and machine. Favourites come first
+  in their stored order (`projectList(spaceRows, recent, spaces, favorites)`):
+  a favourite that matches a row marks a copy with `starred: true` and
+  `favorite: {folder, machine}`; one with no matching row is added as a
+  `{key: folder, machine, name, git, space: null, busy: false, starred: true,
+  favorite: {folder, machine}}` row. Without favourites the list is exactly the
+  old one, with no `starred` key. Then the open spaces from every connected
+  machine (`projectsFromSpaces`): a space is
+  keyed by the live `cwd` of its first tab, else its `folder`, rows carry
+  `{key, machine, name, git, space, busy}`, dedupe by `(machine, key)`, and the
+  active space comes first. Then the remembered projects without a space
   (`projectList(spaceRows, recent, spaces)`), most recent first; a remembered
-  folder equal to a space row's key, or to the `folder` of that row's space,
-  merges into the space row.
-- `init` builds the rows from memory (one `spaces()` and one `panes()` call,
-  plus `shared("new-agent.recent")`) and paints synchronously. No `exec`, git,
-  scan or agent check runs on open, and nothing is written to `shared`.
-- History is `new-agent.recent`, plain JSON `[{folder, name, git}]`, newest
-  first, deduped by folder, capped at 30 (`readRecent`, `rememberProject`; a
-  missing or garbage value reads as empty). It is written with `setShared`
-  only on Start, after the launch: the repo's main checkout (`repo.main`, from
-  the worktree start's `repoOf`, or one `repoOf` call for a git project), else
-  the launched folder; `name` is its last path segment. The stored `git` makes
-  the worktree switch work for a project without a space.
+  entry merges into a space row only on the same machine, by the row's key or
+  the `folder` of that row's space. Selection uses `projectId(row)` =
+  `JSON.stringify([machine ?? null, key])`, so the same absolute path on two
+  machines stays two rows. Favourites lead, but the default selection is still
+  the active space's row, else the first row. A remote row shows
+  `machine · folder`; a local one keeps the `~` form.
+- `init` builds the rows from memory (one `spaces()`, one `panes()`,
+  `shared("new-agent.recent")`, `shared("new-agent.favorites")`,
+  `shared("new-agent.agents")`) and paints
+  synchronously. Nothing runs before the first frame. One `knownAgents` probe
+  for the machine the dialog opened on runs after 800 ms, even when that
+  machine's chips are cached.
+- History is `new-agent.recent`, plain JSON
+  `[{folder, machine, name, git}]`, newest first, deduped by
+  `(machine, folder)`. Both writers cap it at 50 (`rememberProject` with the
+  explicit cap on Start, `rememberSpaces` in the sidebar); `readRecent` never
+  caps. Legacy entries without `machine` read as local; a missing or garbage
+  value reads as empty. `agents-clean` also writes it once a second for every open space
+  (`rememberSpaces` in `mods/agents-clean/recent.js`): the active space's folder
+  goes first, then the other spaces in order, so closing a space keeps it in
+  New agent. It writes only when a folder is new, and never past 50. On Start
+  it is written with `setShared` after the launch: the repo's main checkout
+  (`repo.main`, from the worktree start's `repoOf`, or one `repoOf` call on the
+  project's machine for a git project), else the launched folder; `name` is its
+  last path segment. The stored `git` makes the worktree switch work for a
+  project without a space. Start closes the dialog *before* this history write
+  (`void this.remember(...)`), so a slow remote `repoOf` never holds the dialog
+  open.
+- Favourites are `new-agent.favorites`, the same shape as history and the same
+  normalizer (`readFavorites = readRecent`), capped at 50 and toggled by
+  `toggleFavorite` (a stored `(folder, machine)` leaves, keeping the rest's
+  order; a new one joins the front). Each project row has a 22px star at its
+  right, drawn from `mods/new-agent/star.svg` / `star-filled.svg`; clicking it
+  writes the key and rebuilds the list. `alt-f` toggles the selected row and
+  `alt-1…9` selects the nth starred row (`pickFavorite`). Adding a git row
+  resolves its main checkout on the background: `repoOf` runs, and the
+  favourite becomes `repo.main` (or is dropped when that is already stored), so
+  settling the worktree away does not rot it. The list shows small *Favorites*
+  and *Projects* headings only when a starred row is present. Key shape:
+  `{folder, machine, name, git}`.
 - The *Filter projects* input (`filterProjects`) matches a case- and
-  diacritic-insensitive substring of the name, the folder and its `~` form. A
-  selection that is filtered out moves to the first visible row; with no match
-  nothing is selected, Start is dimmed and the list says "No matching
-  projects." Up and down move within the visible rows; Enter in the filter
-  starts. The task input has the initial focus; `tab` cycles filter, task and
-  (worktree on) branch.
-- The last row *Other folder…*, or `alt-o`, calls `pickFolder()`. Cancel
-  changes nothing. A picked folder is merged into a row that already lists it,
-  else added as a project (one `repoOf` call decides `git`); it is selected and
-  the filter is cleared. It is remembered only when Start runs.
-- Agent chips come from `shared("new-agent.agents")` (plain
-  `{key,name,icon,tint,run}` entries). When that is missing or empty, one deferred `exec` checks the
-  agent commands on PATH
-  (after 800 ms, so the first frames paint) replaces the installed ones. *Set as
+  diacritic-insensitive substring of the name, the folder and the machine; the
+  `~` form is used only for local rows. A selection that is filtered out moves
+  to the first visible row; with no match nothing is selected, Start is dimmed
+  and the list says "No matching projects." Up and down move within the visible
+  rows; Enter in the filter starts. The task input has the initial focus; `tab`
+  cycles filter, task and (worktree on) branch.
+- The *Other folder…* row after the projects, or `alt-o`, calls the local
+  `pickFolder()`. Cancel changes nothing. A picked folder is merged into a row
+  that already lists it, else added as a project (one `repoOf` call decides
+  `git`); it is selected and the filter is cleared.
+- Each named machine from `machines()` gets a **Folder on &lt;machine&gt;…** row.
+  It opens an in-dialog folder browser for that machine; there is no remote
+  system picker. It starts in the selected project's folder when that project
+  is on the same machine, else in that machine's home (`sh printf $HOME`,
+  PowerShell fallback). Each read is one `exec` on that machine:
+  `cd "$1" && pwd -P; ls -1ApL` (PowerShell `Resolve-Path` +
+  `Get-ChildItem -Directory -Force` fallback), parsed by `folderListing`
+  into `{path, names}`. A broken symlink or an `ls` error loses only that
+  entry; a folder the shell cannot enter shows the error and *Try again*.
+  Rows are `..` (when `parentFolder(path)` is not null) and the child folders;
+  `-L` keeps symlinked directories visible. Click a folder or press Enter to
+  descend, Backspace/Up for the parent, the `~` button or `alt-h` for home,
+  `alt-enter` or **Use this folder** to choose the current folder, *Show hidden*
+  or `alt-.` for dot-folders, Escape for cancel. The browser replaces the
+  filter with the machine/path bar and hides the project list; a text input
+  keeps its own keys. Neither a picked nor a browsed folder is remembered
+  until Start runs.
+- `parentFolder`, `joinFolder` and `folderListing` are pure: separators stay
+  slash or backslash, a drive root is not collapsed, and names keep the
+  shell's order. The browser state is `{machine, at, path, parent, entries,
+  index, hidden, loading, error}`; `at` is the folder being read, so a stale
+  read after fast navigation is ignored (`browser.at !== folder`).
+- Agent chips come from `shared("new-agent.agents")`, a map keyed by machine
+  (`""` is this computer) of plain `{key,name,icon,tint,run}` entries; the old
+  array shape loads as this computer's list. Chips are `knownAgents({on:
+  machine})` filtered to `installed`: a deferred probe after 800 ms refreshes
+  the machine the dialog opened on, and switching to a machine with no cached
+  list probes it at once. The selected agent is kept when it exists on the new
+  machine; otherwise `pickAgent` re-picks (requested, preferred, last, first).
+  A failed probe keeps the cache; an unchanged list is not written back. *Set as
   default* writes `new-agent.preferred`; without one the last used agent
   (`new-agent.agent`) is selected. A chip click changes only this launch.
 - `props.agent` (a chip key, e.g. `terminal` from the Terminals `+`) selects
   that chip for this launch when it is among the choices: `pickAgent(agents,
   preferred, last, requested)` ranks requested, preferred, last, first. It is
-  not written to `new-agent.preferred` or `new-agent.agent` until Start, and the
-  deferred agent check applies it again when it re-picks.
+  not written to `new-agent.preferred` or `new-agent.agent` until Start, and
+  the deferred agent check applies it again when it re-picks.
 - The last chip is always `TERMINAL` (`logic.js`: key `terminal`, icon
   `icons/shell.svg`, empty `run`). It is added to the chips at render time and
-  to `alt-a`'s cycle, is not in `AGENTS` and is never stored in
-  `new-agent.agents`, so it shows while checking and with no agents. It can be
-  the default or last used (`terminal`). `agentArgv` returns no argv, and
-  `unsupported` when a task is given ("Terminal can't take a task. Clear it or
-  pick an agent."). `launchPlan` then drops `argv`, `task` and the tab name:
-  `tab.new {space, folder}` or `space.new {folder}` (the worktree path when on).
+  to `alt-a`'s cycle, is never stored in `new-agent.agents`, so it shows while
+  checking and with no agents. It can be the default or last used (`terminal`).
+  `agentArgv` returns no argv, and `unsupported` when a task is given
+  ("Terminal can't take a task. Clear it or pick an agent."). `launchPlan` then
+  drops `argv`, `task` and the tab name: `tab.new {space, folder}` or
+  `space.new {folder, machine}` (the worktree path when on).
 - A row is git when its space shows a `branch` (or its stored entry says so).
   The checkbox starts off and is unavailable outside git. A space with an
   agent working or blocked is noted on the row. A click or `alt-w` toggles it; on shows a branch input with
@@ -171,17 +232,27 @@ branch input and a Start button.
   | every other agent | Herdr's positional `task` |
 
 - Off: `space.select`, then `tab.new` in the space (folder = the row's key), or
-  `space.new {folder}` when the project has no space or the space has gone.
+  `space.new {folder, machine}` when the project has no space or the space has
+  gone. `machine` is added only to `space.new`; a remote space id already
+  carries its machine, so `tab.new` gets none.
 - On: one `git rev-parse --show-toplevel --path-format=absolute
-  --git-common-dir` in the row's folder (`parseRepo`), `for-each-ref` for a
-  unique name unless the branch was typed, `show-ref`, then `git worktree add`
-  in the main checkout under `~/.herdr/worktrees/<repo>/<branch>`, then an
-  unnamed `space.new {folder, tab, argv}` (plus `task` for the agents that take
-  one), unnamed so the sidebar nests it under its repo. A folder outside git
+  --git-common-dir` in the row's folder on the project's machine (`parseRepo`,
+  `exec(..., {on})`), `for-each-ref` for a unique name unless the branch was
+  typed, `show-ref`, then `git worktree add` in the main checkout under
+  `~/.herdr/worktrees/<repo>/<branch>` on that machine, then an unnamed
+  `space.new {folder, machine, tab, argv}` (plus `task` for the agents that
+  take one), unnamed so the sidebar nests it under its repo. The remote home
+  comes from `sh` / PowerShell, cached per dialog. A folder outside git
   reports "Not a git repository".
+- Start refuses while the folder browser or a folder add owns the next input,
+  while the selected machine has no cached agent list and its probe is still
+  running (the chips would be only Terminal), and when `machines()` has the
+  project's machine missing, `unavailable` or `loading`. Nothing is created for
+  a refused start.
 - Enter, including with no input focused after a click, or the Start button
-  runs the launch. Start is dimmed until a project and an agent are chosen and
-  cannot fire twice.
+  runs the launch. Start is dimmed until a project and an agent are chosen,
+  while the selected machine's first agent check is running, when the folder
+  browser is open, and cannot fire twice.
 - The shipped `worktree` dialog is not reused: it cannot pass a task.
 
 ## Built from
@@ -202,14 +273,20 @@ branch input and a Start button.
   image, svg` from `gpui-kit`, `v_flex, h_flex` from `gpui-base`, and
   `agents, terminals, panes, focused, spaces, run, theme, shared, setShared,
   setAgentOrder, openOverlay, closeOverlay, props, window, layout` from
-  `herdr`. State: `localStorage` keys `changed`, `pins`, `panels` (none here),
-  `shared("agents.sort")`, `shared("sidebar.width")` / `sidebar.collapsed`.
+  `herdr`, and `rememberSpaces` from `./recent.js`. State: `localStorage` keys
+  `changed`, `pins`, `panels` (none here), `shared("agents.sort")`,
+  `shared("sidebar.width")` / `sidebar.collapsed`. A `cx.timer.every(1000)`
+  calls `rememberOpenSpaces()`: it reads `panes()` and `spaces()`, puts the
+  active space first, and writes `new-agent.recent` only when
+  `rememberSpaces` returns a new list. That is another mod's shared key.
 - Commands used: `pane.focus`, `terminal.peek`, `tab.close`,
   `tab.unsettle`, `space.close`, `layout.resize`, `layout.select`,
   `layout.show`, `layout.hide`. Assets: `mods/workspace-chrome/{spinner,check,chevron-down,
-  chevron-right,pin,pin-off,minus,archive,clock,layers,plus}.svg` and the
-  program icons from the app's program table. `exec` runs `git` in
-  `new-agent`, only from Start with a worktree on. No `hc` or network.
+  chevron-right,pin,pin-off,minus,archive,clock,layers,plus}.svg`, the
+  program icons from the app's program table, and `new-agent`'s own
+  `mods/new-agent/{star,star-filled}.svg`. `new-agent` uses `knownAgents`
+  and `exec` (git, a folder check, the remote home) on the project's machine;
+  `agents-clean` uses `exec` for remote settle. No `hc` or network.
 - The installer `install.sh` copies the mods and the layout into
   `~/.config/herdr-app` (or `HERDR_APP_HOME`), merges `ctrl-shift-a` into an
   existing `keys.json`, runs `herdr-app check` on both, then
@@ -225,7 +302,6 @@ branch input and a Start button.
   tick: `spaces()` stays stale until it does, which is why `Settle all` waits
   for each closed tab to go. A task that calls `run()` in the click's own turn
   never wakes from its next `await`, so `Settle all` does an `exec` first.
-- Remote spaces carry `machine/`-prefixed ids — pass them through unchanged.
 - This is a copy of a shipped mod: upstream fixes to the Agents panel do not
   arrive here. When Herdr updates `mods/agents` (check `installed.json`), copy
   it again and re-apply `settleTab` + the settle button.
@@ -236,15 +312,32 @@ branch input and a Start button.
   settles several tabs one after another, waiting for each close to land.
 - Herdr 0.9.5 stalls for seconds on the first redraws after any dialog opens,
   shipped ones too (the main thread is in JIT maintenance). The dialog redraws
-  as little as it can: no redraw on focus or typing a task, no agent check once
-  a list is stored.
+  as little as it can: no redraw on focus or typing a task, and the one agent
+  probe waits 800 ms and rewrites `shared` only when the list changed.
+- The New agent dialog's size lives in both `mods/new-agent/mod.json` and the
+  two `openOverlay({mod: "new-agent", ...})` calls in `agents-clean`; change all
+  three together or the `+` opens at a different size. `agents-clean` writes
+  `new-agent.recent`, another mod's shared key: keep its entry shape identical
+  to `new-agent`'s `readRecent` / `rememberProject`.
+- Remote rows and history entries must keep their `machine`: the same absolute
+  folder on two machines is two projects. Never compare or dedupe them by
+  folder alone.
+- Remote git, folder checks and the home lookup use `exec(..., {on})`; remote
+  space ids carry a `machine/` prefix and must be passed through unchanged.
+  `space.new` needs `machine` explicitly; `tab.new` in an existing remote space
+  does not. `pickFolder` is local-only, which is why remote machines get the
+  in-dialog folder browser.
+- A machine that is loading or unavailable at Start is refused. A later dialog
+  open probes it again; there is no retry timer inside one open.
+- `knownAgents` is cached by Herdr for up to a minute. An empty answer is
+  stored as "no agents on that machine" and leaves only the Terminal chip.
 - A worktree has no ignored files (`.env`, `node_modules`) of its own.
-- `new-agent` covers this computer only; remote spaces are left out.
 - Compact rail mode (<160px) draws no actions; widen the sidebar to settle.
 
 ## Done when
 
-- `herdr-app check mods/agents-clean` passes.
+- `herdr-app check mods/agents-clean` and `herdr-app check mods/new-agent`
+  pass.
 - Hovering an `idle` agent shows pin + archive; hovering `working` shows only
   pin.
 - Clicking archive on an agent in a space with several tabs closes that tab;
@@ -256,6 +349,17 @@ branch input and a Start button.
 - "Settle all (N)" closes the finished agents in that group and nothing else.
 - `ctrl-shift-a` lists a repo once, and starting with the checkbox off adds a
   tab to that repo's space; with it on, a nested space on a new branch.
+- With a connected remote machine, New agent lists its spaces and history with
+  `machine · folder`, shows the agents installed on that machine, and starts a
+  Terminal or agent on it. The same absolute folder on this computer and on the
+  server is two rows.
+- **Folder on &lt;machine&gt;…** opens the folder browser on that machine; clicking
+  a folder descends, `..`/Backspace goes up, and **Use this folder** selects the
+  current folder. Start on a space that does not exist yet makes it on that
+  machine. The worktree switch creates the checkout under that machine's home.
+- Start refuses a machine that is offline or still loading, and does not launch
+  the Terminal by accident before the first agent check on that machine
+  finishes.
 - Settling a clean, merged worktree's last tab removes it; a dirty one asks.
 - `ctrl-shift-l` switches to `agents-first`, and the panel matches
   `preview.png`.
