@@ -1,8 +1,8 @@
-<h1 align="center">Herdr · Settle Closes</h1>
+<h1 align="center">Herdr · Agents first</h1>
 
 <p align="center">
-  A <a href="https://herdr.dev">Herdr</a> package for agent-first work: start an agent in any project,<br/>
-  in a worktree when you want one, and let <b>Settle</b> clean up after it.
+  A <a href="https://herdr.dev">Herdr</a> sidebar for working with coding agents:<br/>
+  your agents on top, your terminals under them, and no Spaces to manage.
 </p>
 
 <p align="center">
@@ -13,52 +13,48 @@
 </p>
 
 <p align="center">
-  <img src="assets/settle.png" alt="Three blue birds flying through an open doorway" width="280" />
+  <img src="assets/overview.png" alt="Herdr with Agents first: agents grouped by state on top, terminals below, a dev server in the main pane" width="860" />
 </p>
 
-## The problem
+## Why
 
-Herdr's **settle** is gentle: it puts a tab away but keeps it running, and in a
-tab bar that lists every tab the finished work stays around. After a day of
-agents you have a row of zombie tabs and terminals you no longer need.
+Herdr's stock window is organized around **spaces**. When most of your work is
+agents, you mostly want to know three things: which agent needs you, which
+are still working, and where your plain terminals are. Spaces get in the way,
+and finished agents pile up as tabs nobody closes.
 
-This mod makes settle mean what it says: **the work is done, clean it up**.
+Agents first keeps only what you work with in the sidebar, starts new work
+from one dialog, and cleans up when the work is done.
 
 ## What you get
 
-- **Settle = close.** The archive button on an agent row closes its tab
-  (`tab.close`), which ends the terminal and the agent in it.
-- **Agents and Terminals, no Spaces.** The `main-settle` layout lists Agents
-  and, under them, your plain terminals. Spaces still exist, but they are
-  plumbing: New agent makes one when a project needs it, and settling the last
-  tab of a space closes it. The project stays in New agent's list.
-- **Terminals.** A tab without an agent shows in the Terminals list with a
-  shell icon, its name and its folder. The `+` there opens New agent with the
-  Terminal chip selected; the archive button on hover closes the tab the same
-  way Settle does.
-- **Safe by default.** The button only appears for `idle` and `done` agents.
-  A working or blocked agent shows only *pin*, so a stray click cannot kill a
-  running turn.
-- **Settle all.** The group header's archive button cleans up every finished
-  agent in that group the same way.
-- **New agent.** `ctrl-shift-a` or the `+` in the Agents header opens one dialog:
-  project, agent, task and a **New worktree** switch. See below.
-- **Worktrees clean up after themselves.** See [Settling a worktree](#settling-a-worktree).
-- **The rest is the stock panel.** Priority / grouped-by-space sorting, pins,
-  sub-agent trees, attention states, the compact rail — all unchanged.
+| | |
+|---|---|
+| **Agents** | The stock Agents panel: *Needs you*, *Working*, *Done*, *Idle*, pins, sub-agents, sort by priority or project. |
+| **Terminals** | Every tab without an agent, with its project and folder. Click to focus it; hover to close it. |
+| **New agent** (`ctrl-shift-a`) | Pick a project, an agent (or a plain terminal) and a task; optionally a new git worktree. |
+| **Settle closes** | The archive button on a finished agent closes its tab. Settling a merged worktree removes it. |
+| **No Spaces** | Spaces still exist inside Herdr, but you never manage them: New agent makes them, Settle closes them. |
 
-> The archive icon in the screenshot is *Settle all* for the Idle group. On a
-> row, pin and settle appear on hover, next to the agent's name.
+## A quick tour
+
+1. **`ctrl-shift-a`** (or `+` in the Agents header). Type what the agent should
+   do, press Enter. The project defaults to the one you are in.
+2. **Watch the Agents list.** Rows move between *Needs you*, *Working* and
+   *Done*; the status bar counts them. Click a row to jump to it.
+3. **Need a shell?** `+` in the Terminals header opens the same dialog with
+   *Terminal* selected.
+4. **Done?** Hover the agent and click archive (or *Settle all* on the group).
+   The tab closes; a clean, merged worktree is removed with it.
 
 <p align="center">
-  <img src="preview.png" alt="The Agents panel with the settle-closes mod" width="297" />
+  <img src="assets/new-agent.png" alt="The New agent dialog: a project list with a filter, agent chips, a task input and a New worktree switch" width="480" />
 </p>
 
 ## New agent
 
-The `main-settle` layout has no Spaces panel: the **New agent** dialog picks a
-project, and Herdr's space for it is made and closed for you. A project does
-not need a space first.
+The dialog picks a project, not a space; Herdr's space for it is made for
+you, so a project does not need a space first.
 
 - **Project:** the open local spaces first (the active one on top), named
   after the space and keyed by its live folder, then the projects you have
@@ -107,40 +103,58 @@ only; spaces on other machines are not listed yet. A worktree starts empty of
 ignored files, so a project that needs `.env` or `node_modules` has to set
 those up.
 
-## Settling a worktree
+## Terminals
 
-Settling the last tab of a space in `~/.herdr/worktrees`:
+The list under Agents shows every tab that has no agent in it, in the order
+of your projects. Each row has the tab's name (or its project's), and its
+folder, with the machine for a remote one.
+
+- **Click** focuses the terminal.
+- **Hover → archive** closes the tab. It goes through the same code as
+  Settle, so a worktree's last tab is cleaned up the same way. There is no
+  idle/done gate here: a shell has no status, so you decide.
+- **`+`** opens New agent with the Terminal chip selected; your default agent
+  does not change.
+
+## Settle
+
+Herdr's own **settle** parks a tab and keeps it running. Here the archive
+button on an `idle` or `done` agent **closes** the tab, which ends the agent.
+A working or blocked agent shows only *pin*, so a stray click cannot kill a
+running turn, and a finished agent is kept while another agent in its tab is
+still busy. *Settle all* on a group header does the same for every finished
+agent in it, one tab after another.
+
+Closing a space's last tab closes the space; the project stays in New agent's
+list. For the last tab of a space in `~/.herdr/worktrees`:
 
 - **No uncommitted changes, and merged into the branch the main checkout is on:**
   the space closes and the worktree is removed. The branch stays.
 - **Anything else:** Herdr's *Remove worktree* dialog asks first, and cancelling
-  leaves everything as it was. `Settle all` skips these instead of asking.
+  leaves everything as it was. *Settle all* skips these instead of asking.
 
-Any other tab or space settles as described above: the tab closes, and on a
-space's last tab Herdr closes the space with it, without a fresh tab first. A
-worktree you created elsewhere is never removed.
+A worktree you created elsewhere is never removed.
 
 ## Install
 
 ### From a release (recommended)
 
-1. Download `herdr-settle-close-0.1.0.zip` from
-   [Releases](https://github.com/rdurica/herdr-settle-close/releases/latest).
+1. Download `herdr-agents-first-<version>.zip` from
+   [Releases](https://github.com/rdurica/herdr-agents-first/releases/latest).
 2. Unzip and run the installer:
 
 ```sh
-unzip herdr-settle-close-0.1.0.zip
-cd herdr-settle-close
+unzip herdr-agents-first-*.zip
+cd herdr-agents-first
 ./install.sh
 ```
 
-The installer copies `mods/agents-clean/`, `mods/new-agent/` and
-`layouts/main-settle.json` into `~/.config/herdr-app/`, adds `ctrl-shift-a` to
-`keys.json`, runs `herdr-app check`, and switches the window to the
-`main-settle` layout. An existing layout with that name is never overwritten,
-and a key you already use is left alone. Run it again to update; locally
-changed mod files and `keys.json` are backed up to
-`~/.cache/herdr-settle-close/` first.
+The installer copies `mods/agents-clean/`, `mods/new-agent/` and the
+`agents-first` layout into `~/.config/herdr-app/`, adds `ctrl-shift-a` to
+`keys.json`, runs `herdr-app check`, and switches the window to the layout. An
+existing layout with that name is never overwritten, and a key you already
+use is left alone. Run it again to update; locally changed mod files and
+`keys.json` are backed up to `~/.cache/herdr-agents-first/` first.
 
 Use Herdr from another folder? `HERDR_APP_HOME=/path ./install.sh`.
 
@@ -148,22 +162,25 @@ Use Herdr from another folder? `HERDR_APP_HOME=/path ./install.sh`.
 
 ```sh
 cp -R mods/agents-clean mods/new-agent ~/.config/herdr-app/mods/
-cp layouts/main-settle.json ~/.config/herdr-app/layouts/
+cp install/agents-first.json ~/.config/herdr-app/layouts/
 herdr-app check ~/.config/herdr-app/mods/agents-clean
 herdr-app check ~/.config/herdr-app/mods/new-agent
+herdr-app do layout.switch --name agents-first
 ```
 
 Add `"ctrl-shift-a": "mod.open:new-agent"` to the `global` section of
 `~/.config/herdr-app/keys.json`.
 
-Then pick the layout with `ctrl-shift-l`, or:
+Prefer your own layout? Point its agents block at `{"mod": "agents-clean"}`
+and add a block `{"mod": "agents-clean", "props": {"terminals": true}}` where
+you want the Terminals list.
 
-```sh
-herdr-app do layout.switch --name main-settle
-```
+### Upgrading from herdr-settle-close
 
-You can also clone your own layout (`herdr-app do layout.clone --name main --as my-layout`)
-and point its agents block at `"mod": "agents-clean"`.
+This package used to be called *Settle closes*, with a `main-settle` layout.
+The mods keep their names, so `./install.sh` updates them in place and adds
+the `agents-first` layout. Remove `~/.config/herdr-app/layouts/main-settle.json`
+once you have switched; the installer reminds you while it is there.
 
 ### Requirements
 
@@ -171,107 +188,65 @@ and point its agents block at `"mod": "agents-clean"`.
 - `bash` for the installer; the manual copy works everywhere.
 - No extra programs, no network access, no build step.
 
-## How it works
-
-`agents-clean` is a copy of the shipped **Agents** panel with settling rewritten
-and a `+` in its header. With `props: { terminals: true }` the same mod draws
-the Terminals list instead (`terminals.js` picks the rows). `new-agent` is a
-separate dialog mod. This is the basic settle, in `mods/agents-clean/close.js`;
-`settle.js` holds the worktree decisions:
-
-```js
-// Settling ends the work: close its tab (and the terminal in it). A tab that is
-// its space's last one closes the space with it.
-function settleTab(spaceId, tabId) {
-  run("tab.close", { id: tabId });
-}
-```
-
-The hover action calls it instead of `tab.settle`:
-
-```js
-const finished = a.status === "idle" || a.status === "done";
-const settle = !finished ? null : action(
-  `settle-${a.address}`, "archive", "Settle: close its tab and end it",
-  () => settleTab(a.space, a.tab),
-);
-```
-
-`layouts/main-settle.json` is a copy of the stock `main` layout without the
-Spaces list: its `agents` block points at `agents-clean` and a `terminals` block
-below it at `agents-clean` with the `terminals` prop. Everything else (tabs,
-files panel, status bar) is the shipped setup.
-
 ## Safety
 
-- **Destructive by design.** Settle ends the terminal. There is no undo, and a
-  running agent's turn is lost — that is why the button is gated on `idle` /
-  `done`.
-- `Settle all` is always visible on groups that have finished agents and closes
-  several tabs one after another, waiting for each close to land.
-- The built-in `tab.settle` command (palette, CLI, keys) is part of the Herdr
-  core and still only parks a tab. This mod changes the panel's button only.
-- A finished agent is not settled while another agent in its tab is working or
-  blocked.
+- **Settle is destructive by design.** It ends the terminal; there is no undo.
+- The built-in `tab.settle` command (palette, CLI, keys) still only parks a
+  tab. Only the panel's button closes.
 - **The mods run local programs.** `new-agent` runs `git` only when the New
-  worktree switch is on, and `agents-clean` runs `git` when it settles a
+  worktree switch is on, and `agents-clean` runs `git` when it closes a
   space's last tab. Neither reaches the network. `git worktree remove` never
-  runs with `--force` from Settle, so doubt keeps the worktree.
+  runs with `--force`, so doubt keeps the worktree.
 
-## Customize
+## How it works
 
-- **Name / folder:** if you rename `mods/agents-clean`, update `mod.json`,
-  the layout's `"mod": "agents-clean"`, and the sort popup's
-  `openOverlay({ mod: "agents-clean" })` inside `main.js`.
-- **Allow settling working agents:** change the `finished` check in
-  `mods/agents-clean/main.js` — know that it kills the turn.
-- **Different look:** layouts take theme colors, fonts and sizes; the layout's
-  sidebar width, tab bar height and panel are plain numbers in
-  `layouts/main-settle.json`.
-- **Upstream updates:** this is a copy of the `agents` mod shipped with Herdr
-  0.9.x (version 0.1.10). After a Herdr update, copy the new `mods/agents`
-  over and re-apply `settleTab` + the button change, or the panel will fall
-  behind new features.
+- `agents-clean` is a copy of the shipped **Agents** panel (Herdr 0.9.x,
+  version 0.1.10) with Settle rewritten and a `+` in its header. With
+  `props: {terminals: true}` the same mod draws the Terminals list instead, so
+  both share one close path (`close.js`). `terminals.js` picks the terminal
+  rows and `settle.js` decides what happens to a worktree.
+- `new-agent` is the dialog. `logic.js` holds everything that can be tested
+  without Herdr: the project list, the filter, branch names and launch plans.
+- `install/agents-first.json` is the stock `main` layout with the Spaces block
+  replaced by Agents (two thirds) and Terminals (one third).
+
+After a Herdr update that changes `mods/agents`, copy it over `agents-clean`
+again and re-apply the settle and Terminals changes, or the panel falls behind.
 
 ## Uninstall
 
 ```sh
 rm -rf ~/.config/herdr-app/mods/agents-clean ~/.config/herdr-app/mods/new-agent
-rm ~/.config/herdr-app/layouts/main-settle.json
+rm ~/.config/herdr-app/layouts/agents-first.json
 ```
 
-Remove the `ctrl-shift-a` line from `keys.json`. Switch to another layout first (`ctrl-shift-l`); Herdr keeps running as before.
+Remove the `ctrl-shift-a` line from `keys.json`. Switch to another layout first
+(`ctrl-shift-l`); Herdr keeps running as before.
 
 ## Repository layout
 
 | Path | What it is |
 |---|---|
-| `mods/agents-clean/` | the Agents panel: `main.js`, `settle.js`, `mod.json` |
-| `mods/new-agent/` | the New agent dialog: `main.js`, `logic.js`, `mod.json` |
-| `layouts/main-settle.json` | the layout that shows the panel |
+| `mods/agents-clean/` | the Agents and Terminals panel |
+| `mods/new-agent/` | the New agent dialog |
+| `install/agents-first.json` | the layout (not in `layouts/`, which herdr.dev does not list) |
 | `install.sh` | copies all of it into the app home and checks it |
-| `tests/` | `node --test`, not part of a release |
-| `RECIPE.md` | a build brief, in the format [herdr.dev/mods](https://herdr.dev/mods) uses |
-| `preview.png` | screenshot for the share page |
-| `package.sh` | builds `dist/herdr-settle-close-<version>.zip` |
-| `VERSION` | release version |
-| `CHANGELOG.md` | what changed |
+| `RECIPE.md` | the build brief herdr.dev shows; its title is the listing name |
+| `preview.png` | the herdr.dev listing picture |
+| `assets/` | README pictures |
+| `tests/` | `node --test tests/*.test.mjs`, not part of a release |
+| `package.sh` | builds `dist/herdr-agents-first-<version>.zip` |
 
 ## Development
 
 ```sh
-herdr-app check mods/agents-clean     # must pass
-./package.sh                          # build the release zip
+node --test tests/*.test.mjs
+herdr-app check mods/agents-clean && herdr-app check mods/new-agent
+./package.sh
 ```
 
 Edits apply live while Herdr runs; `herdr-app status` lists any file or mod
-errors, and `herdr-app shot` saves the current frame for a quick look.
-
-## Sharing
-
-The repo follows the Herdr share format (`mods/`, `RECIPE.md`, `preview.png`),
-so it can be published at [herdr.dev/mods](https://herdr.dev/mods) — the
-GitHub topic is `herdr-mod`.
+errors, and `herdr-app shot` saves the current frame.
 
 ## License
 

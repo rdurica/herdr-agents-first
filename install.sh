@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the "agents-clean" and "new-agent" Herdr mods, the "main-settle"
+# Installs the "agents-clean" and "new-agent" Herdr mods, the "agents-first"
 # layout, and (when keys.json is there) the ctrl-shift-a key that opens the
 # New agent dialog.
 # Usage: ./install.sh            (HERDR_APP_HOME or ~/.config/herdr-app)
@@ -9,8 +9,8 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 app_home=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
 mods="agents-clean new-agent"
-layout=main-settle
-cache_root=${XDG_CACHE_HOME:-${HOME:-$app_home}/.cache}/herdr-settle-close
+layout=agents-first
+cache_root=${XDG_CACHE_HOME:-${HOME:-$app_home}/.cache}/herdr-agents-first
 
 if [ -n "${HERDR_APP:-}" ]; then
   herdr_app=$HERDR_APP
@@ -95,7 +95,11 @@ if [ -e "$app_home/layouts/$layout.json" ]; then
     echo "layouts/$layout.json is an older copy without the Terminals block - remove it and re-run to get the new layout."
   fi
 else
-  cp "$here/layouts/$layout.json" "$app_home/layouts/"
+  cp "$here/install/$layout.json" "$app_home/layouts/"
+fi
+# The layout this package shipped as herdr-settle-close: left alone, it may be in use.
+if [ -e "$app_home/layouts/main-settle.json" ]; then
+  echo "layouts/main-settle.json is the old name of this layout - remove it once you use \"$layout\"."
 fi
 
 # --- the key ---------------------------------------------------------------

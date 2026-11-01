@@ -2,12 +2,18 @@
 
 ## Unreleased
 
-- **Agents and Terminals, no Spaces.** The `main-settle` layout drops the
+- **Renamed to Agents first** (`herdr-agents-first`). The layout is now
+  `agents-first` and ships as `install/agents-first.json`: herdr.dev does not
+  list repos with a `layouts/` folder. The mods keep their names. The
+  installer points out a leftover `layouts/main-settle.json`, and the backup
+  folder is `~/.cache/herdr-agents-first/`.
+- New README and screenshots; `preview.png` shows the whole sidebar.
+- **Agents and Terminals, no Spaces.** The layout drops the
   Spaces list. Under Agents, a **Terminals** block (the same `agents-clean` mod
   with `props: { terminals: true }`) lists every tab without an agent: shell
   icon, name, folder (home as `~`, the machine for a remote space). `+` opens
   New agent with the Terminal chip selected; the archive button on hover closes
-  the terminal like Settle. An existing `layouts/main-settle.json` is kept, and
+  the terminal like Settle. An existing layout is kept, and
   the installer says when it lacks the Terminals block.
 - Settle no longer opens a fresh tab first: the last tab of a space that is not
   a managed worktree closes the space with it. The project stays in New agent's

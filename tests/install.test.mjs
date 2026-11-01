@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { repoRoot } from "./load.mjs";
 
-const TMP_ROOT = "/tmp/opencode/herdr-settle-close-tests";
+const TMP_ROOT = "/tmp/opencode/herdr-agents-first-tests";
 
 async function setup(t) {
   await mkdir(TMP_ROOT, { recursive: true });
@@ -20,7 +20,7 @@ async function setup(t) {
   await mkdir(appHome, { recursive: true });
   await mkdir(home, { recursive: true });
 
-  return { root, appHome, home, cache: path.join(home, ".cache", "herdr-settle-close") };
+  return { root, appHome, home, cache: path.join(home, ".cache", "herdr-agents-first") };
 }
 
 function runInstall(appHome, home) {
@@ -86,7 +86,7 @@ test("fresh install copies both mods and the layout", async (t) => {
     "mods/new-agent/main.js",
     "mods/new-agent/mod.json",
     "mods/new-agent/logic.js",
-    "layouts/main-settle.json",
+    "layouts/agents-first.json",
   ];
   for (const rel of installed) {
     assert.ok(existsSync(path.join(appHome, rel)), `${rel} was not installed`);
@@ -97,7 +97,6 @@ test("fresh install copies both mods and the layout", async (t) => {
     "mods/agents-clean/settle.js",
     "mods/new-agent/main.js",
     "mods/new-agent/logic.js",
-    "layouts/main-settle.json",
   ]) {
     assert.equal(
       await readFile(path.join(appHome, rel), "utf8"),
@@ -105,6 +104,25 @@ test("fresh install copies both mods and the layout", async (t) => {
       `${rel} differs from the repo copy`,
     );
   }
+  // The repo keeps the layout outside layouts/: herdr.dev skips repos with one.
+  assert.equal(
+    await readFile(path.join(appHome, "layouts/agents-first.json"), "utf8"),
+    await readFile(path.join(repoRoot, "install/agents-first.json"), "utf8"),
+    "the layout differs from install/agents-first.json",
+  );
+  assert.ok(!existsSync(path.join(repoRoot, "layouts")), "the repo must not have a layouts/ folder");
+});
+
+test("points out the layout's old name and keeps it", async (t) => {
+  const { appHome, home } = await setup(t);
+  await mkdir(path.join(appHome, "layouts"), { recursive: true });
+  await writeFile(path.join(appHome, "layouts/main-settle.json"), '{ "id": "root" }\n');
+
+  const r = runInstall(appHome, home);
+  ok(r);
+
+  assert.match(r.stdout, /layouts\/main-settle\.json is the old name of this layout/);
+  assert.equal(await readFile(path.join(appHome, "layouts/main-settle.json"), "utf8"), '{ "id": "root" }\n');
 });
 
 test("adds ctrl-shift-a to keys.json and backs up the original", async (t) => {
@@ -127,7 +145,7 @@ test("adds ctrl-shift-a to keys.json and backs up the original", async (t) => {
       // Not JSON, so not the keys backup.
     }
   }
-  assert.ok(backedUp, "the original keys.json was not backed up under ~/.cache/herdr-settle-close");
+  assert.ok(backedUp, "the original keys.json was not backed up under ~/.cache/herdr-agents-first");
 });
 
 test("running twice keeps one binding and backs keys.json up only once", async (t) => {
@@ -221,14 +239,14 @@ test("backs up a changed installed logic.js before replacing it", async (t) => {
 });
 
 const OLD_HINT =
-  "layouts/main-settle.json is an older copy without the Terminals block - remove it and re-run to get the new layout.";
+  "layouts/agents-first.json is an older copy without the Terminals block - remove it and re-run to get the new layout.";
 
 test("a fresh install ships a layout with the Terminals block and prints no older-copy hint", async (t) => {
   const { appHome, home } = await setup(t);
 
   const result = ok(runInstall(appHome, home));
 
-  assert.match(await readFile(path.join(appHome, "layouts/main-settle.json"), "utf8"), /"terminals"\s*:\s*true/);
+  assert.match(await readFile(path.join(appHome, "layouts/agents-first.json"), "utf8"), /"terminals"\s*:\s*true/);
   assert.equal(`${result.stdout}${result.stderr}`.includes("older copy"), false);
 });
 
@@ -236,12 +254,12 @@ test("hints when a kept layout has no Terminals block", async (t) => {
   const { appHome, home } = await setup(t);
   await mkdir(path.join(appHome, "layouts"), { recursive: true });
   const old = '{ "id": "root", "children": [{ "id": "agents", "content": { "mod": "agents-clean" } }] }\n';
-  await writeFile(path.join(appHome, "layouts/main-settle.json"), old);
+  await writeFile(path.join(appHome, "layouts/agents-first.json"), old);
 
   const result = ok(runInstall(appHome, home));
   const output = `${result.stdout}${result.stderr}`;
 
-  assert.equal(await readFile(path.join(appHome, "layouts/main-settle.json"), "utf8"), old);
+  assert.equal(await readFile(path.join(appHome, "layouts/agents-first.json"), "utf8"), old);
   assert.ok(output.includes(OLD_HINT), `missing hint in:\n${output}`);
   assert.equal(output.includes("Point that layout's agents block"), false);
 });
@@ -249,7 +267,7 @@ test("hints when a kept layout has no Terminals block", async (t) => {
 test("keeps the agents-clean hint next to the older-copy hint", async (t) => {
   const { appHome, home } = await setup(t);
   await mkdir(path.join(appHome, "layouts"), { recursive: true });
-  await writeFile(path.join(appHome, "layouts/main-settle.json"), '{ "id": "root" }\n');
+  await writeFile(path.join(appHome, "layouts/agents-first.json"), '{ "id": "root" }\n');
 
   const result = ok(runInstall(appHome, home));
   const output = `${result.stdout}${result.stderr}`;
@@ -263,10 +281,10 @@ test("prints no older-copy hint when a kept layout has the Terminals block", asy
   await mkdir(path.join(appHome, "layouts"), { recursive: true });
   const current =
     '{ "id": "root", "children": [{ "content": { "mod": "agents-clean", "props": { "terminals": true } } }] }\n';
-  await writeFile(path.join(appHome, "layouts/main-settle.json"), current);
+  await writeFile(path.join(appHome, "layouts/agents-first.json"), current);
 
   const result = ok(runInstall(appHome, home));
 
   assert.equal(`${result.stdout}${result.stderr}`.includes("older copy"), false);
-  assert.equal(await readFile(path.join(appHome, "layouts/main-settle.json"), "utf8"), current);
+  assert.equal(await readFile(path.join(appHome, "layouts/agents-first.json"), "utf8"), current);
 });

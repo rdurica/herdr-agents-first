@@ -1,13 +1,18 @@
-# Agents (settle closes)
+# Agents first
 
-The shipped Agents sidebar with one promise changed: **Settle** no longer parks
-a tab, it closes it and ends the agent in it. If the tab is its space's last
-one, the space closes with it (it stays in New agent's project list). A
-finished agent is one hover click away from being cleaned up, and the tab bar
-stays empty of old work. The same mod also draws a Terminals list under the
-agents, and the layout has no Spaces list: spaces are plumbing.
+A Herdr sidebar for working with coding agents: your agents on top, your plain
+terminals under them, and no Spaces list. `ctrl-shift-a` starts an agent (or a
+terminal) in any project, in a new git worktree when you want one, and
+**Settle** closes a finished agent's tab instead of parking it, removing its
+worktree when the work is merged.
 
-![Agents (settle closes)](preview.png)
+![Agents first](preview.png)
+
+This brief builds two mods and one layout: `agents-clean` (the Agents panel,
+and a second copy of it with `props.terminals` for the Terminals list),
+`new-agent` (the New agent dialog) and the `agents-first` layout that shows
+them. Spaces stay in Herdr as plumbing: New agent makes them, Settle closes
+them.
 
 ## What you see
 
@@ -181,7 +186,7 @@ branch input and a Start button.
 
 ## Built from
 
-- Layout `main-settle`: a clone of the shipped `main` layout. Nodes:
+- Layout `agents-first` (`install/agents-first.json`): a clone of the shipped `main` layout. Nodes:
   `root` (row) → `sidebar` (column, 268px, min 44, max 480, `chrome`
   background) with `brand` (workspace-chrome, 46px, window drag),
   `sidebar-lists` (`agents` block weight 2, min 90, content
@@ -208,7 +213,8 @@ branch input and a Start button.
 - The installer `install.sh` copies the mods and the layout into
   `~/.config/herdr-app` (or `HERDR_APP_HOME`), merges `ctrl-shift-a` into an
   existing `keys.json`, runs `herdr-app check` on both, then
-  `layout.switch main-settle`.
+  `layout.switch agents-first`. The repo keeps the layout in `install/`,
+  not `layouts/`.
 
 ## Watch out
 
@@ -251,5 +257,5 @@ branch input and a Start button.
 - `ctrl-shift-a` lists a repo once, and starting with the checkbox off adds a
   tab to that repo's space; with it on, a nested space on a new branch.
 - Settling a clean, merged worktree's last tab removes it; a dirty one asks.
-- `ctrl-shift-l` switches to `main-settle`, and the panel matches
+- `ctrl-shift-l` switches to `agents-first`, and the panel matches
   `preview.png`.

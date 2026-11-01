@@ -5,9 +5,9 @@ import path from "node:path";
 
 import { repoRoot } from "./load.mjs";
 
-describe("layouts/main-settle.json", () => {
+describe("install/agents-first.json", () => {
   async function lists() {
-    const layout = JSON.parse(await readFile(path.join(repoRoot, "layouts/main-settle.json"), "utf8"));
+    const layout = JSON.parse(await readFile(path.join(repoRoot, "install/agents-first.json"), "utf8"));
     const find = (node, id) => {
       if (node.id === id) return node;
       for (const child of node.children ?? []) {
