@@ -46,7 +46,7 @@ Settle closes them — you just never manage them.
 4. **Done?** Hover the agent and click archive, or *Settle all* on the group.
 
 <p align="center">
-  <img src="assets/new-agent.png" alt="The New agent dialog: a project list with a filter, agent chips, a task input and a New worktree switch" width="480" />
+  <img src="assets/new-agent.png" alt="The New agent dialog: favorite folders at the top with a star, a project list with a filter, agent chips, a task input and a New worktree switch" width="480" />
 </p>
 
 ## Start a task
