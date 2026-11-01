@@ -28,15 +28,21 @@ This mod makes settle mean what it says: **the work is done, clean it up**.
 
 - **Settle = close.** The archive button on an agent row closes its tab
   (`tab.close`), which ends the terminal and the agent in it.
-- **The space stays.** If that tab was the space's last one, a fresh tab opens
-  first in the same folder, so the space does not vanish with it.
+- **Agents and Terminals, no Spaces.** The `main-settle` layout lists Agents
+  and, under them, your plain terminals. Spaces still exist, but they are
+  plumbing: New agent makes one when a project needs it, and settling the last
+  tab of a space closes it. The project stays in New agent's list.
+- **Terminals.** A tab without an agent shows in the Terminals list with a
+  shell icon, its name and its folder. The `+` there opens New agent with the
+  Terminal chip selected; the archive button on hover closes the tab the same
+  way Settle does.
 - **Safe by default.** The button only appears for `idle` and `done` agents.
   A working or blocked agent shows only *pin*, so a stray click cannot kill a
   running turn.
 - **Settle all.** The group header's archive button cleans up every finished
   agent in that group the same way.
 - **New agent.** `ctrl-shift-a` or the `+` in the Agents header opens one dialog:
-  space, agent, task and a **New worktree** switch. See below.
+  project, agent, task and a **New worktree** switch. See below.
 - **Worktrees clean up after themselves.** See [Settling a worktree](#settling-a-worktree).
 - **The rest is the stock panel.** Priority / grouped-by-space sorting, pins,
   sub-agent trees, attention states, the compact rail — all unchanged.
@@ -50,26 +56,42 @@ This mod makes settle mean what it says: **the work is done, clean it up**.
 
 ## New agent
 
-The Spaces `+` copies the folder you are in, which is how one project ends up
-in several spaces. The **New agent** dialog lists the spaces that are already
-open; make a new space with Spaces `+` first.
+The `main-settle` layout has no Spaces panel: the **New agent** dialog picks a
+project, and Herdr's space for it is made and closed for you. A project does
+not need a space first.
 
-- **Space:** one row per open local space, named after the space and keyed by
-  its live folder; the active space comes first. Nothing is scanned or asked
-  of git while the dialog opens, so it paints at once. Remote spaces are not
-  listed.
+- **Project:** the open local spaces first (the active one on top), named
+  after the space and keyed by its live folder, then the projects you have
+  started an agent in before that have no open space, most recent first. A
+  folder is listed once. Nothing is scanned or asked of git while the dialog
+  opens, so it paints at once. Remote spaces are not listed. A project without
+  a space gets a new space when you start.
+- **History:** Start remembers the project (30 at most) in `new-agent.recent`
+  in `~/.config/herdr-app/shared.json`: the repo's main checkout when the folder
+  is in git, else the folder itself. Remove the key to forget them.
+- **Filter:** the *Filter projects* input above the list narrows it as you
+  type, by name or folder path (also as `~/...`), ignoring case and accents.
+  The selection moves to the first match; with no match Start is dimmed.
+  Typing in the task box stays the fast path: `ctrl-shift-a`, type, Enter.
+  `tab` goes filter, task, branch (when the worktree is on) and round.
+- **Other folder…:** the last row, or `alt-o`, opens the system folder picker.
+  The folder joins the list, is selected and is remembered when you start. No
+  folder is scanned for, and there is no root to configure.
 - **Agent:** installed agents as chips. The list is stored the first time, so
   the dialog does not ask again; to pick up a newly installed agent, remove
   `new-agent.agents` from `~/.config/herdr-app/shared.json`.
   *Set as default* above the list remembers one; otherwise the last agent used
   is selected. Picking another chip for one launch does not change the default.
+  A **Terminal** chip always comes last, even with no agents installed: Start
+  opens a plain shell in the project (or its new worktree), named by Herdr. It
+  can be the default too, but it can't take a task, so Start asks you to clear
+  it or pick an agent.
 - **New worktree off:** a new tab in the space's live folder (a new space when
-  the space has gone).
+  the project has none or the space has gone).
 - **New worktree on:** a branch, a checkout in
   `~/.herdr/worktrees/<repo>/<branch>`, and a space nested under the repo. The
   branch name comes from the task (`agent/fix-login`), follows the task until
-  edited, and can be typed. The switch is only available for a space on a git
-  branch.
+  edited, and can be typed. The switch is only available for a project in git.
 - **The switch starts off.** A space with an agent working or blocked is
   noted, but only a click or `alt-w` turns the switch on. Git runs only when
   it is on.
@@ -94,8 +116,9 @@ Settling the last tab of a space in `~/.herdr/worktrees`:
 - **Anything else:** Herdr's *Remove worktree* dialog asks first, and cancelling
   leaves everything as it was. `Settle all` skips these instead of asking.
 
-Any other tab or space settles as described above. A worktree you created
-elsewhere is never removed.
+Any other tab or space settles as described above: the tab closes, and on a
+space's last tab Herdr closes the space with it, without a fresh tab first. A
+worktree you created elsewhere is never removed.
 
 ## Install
 
@@ -151,20 +174,15 @@ and point its agents block at `"mod": "agents-clean"`.
 ## How it works
 
 `agents-clean` is a copy of the shipped **Agents** panel with settling rewritten
-and a `+` in its header. `new-agent` is a separate dialog mod. This is the basic
-settle; `mods/agents-clean/settle.js` holds the worktree decisions:
+and a `+` in its header. With `props: { terminals: true }` the same mod draws
+the Terminals list instead (`terminals.js` picks the rows). `new-agent` is a
+separate dialog mod. This is the basic settle, in `mods/agents-clean/close.js`;
+`settle.js` holds the worktree decisions:
 
 ```js
 // Settling ends the work: close its tab (and the terminal in it). A tab that is
-// its space's last one gets a new tab first, so the space stays instead of
-// closing with it.
+// its space's last one closes the space with it.
 function settleTab(spaceId, tabId) {
-  const space = spaces().find((s) => s.id === spaceId);
-  if (!space) return;
-  if (space.tabs.length <= 1) {
-    const folder = panes().find((p) => p.tab === tabId)?.cwd || space.folder;
-    run("tab.new", folder ? { space: space.id, folder } : { space: space.id });
-  }
   run("tab.close", { id: tabId });
 }
 ```
@@ -179,9 +197,10 @@ const settle = !finished ? null : action(
 );
 ```
 
-`layouts/main-settle.json` is a copy of the stock `main` layout whose `agents`
-block points at `agents-clean`; everything else (sidebar, tabs, files panel,
-status bar) is the shipped setup.
+`layouts/main-settle.json` is a copy of the stock `main` layout without the
+Spaces list: its `agents` block points at `agents-clean` and a `terminals` block
+below it at `agents-clean` with the `terminals` prop. Everything else (tabs,
+files panel, status bar) is the shipped setup.
 
 ## Safety
 

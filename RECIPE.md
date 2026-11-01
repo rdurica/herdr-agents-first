@@ -2,8 +2,10 @@
 
 The shipped Agents sidebar with one promise changed: **Settle** no longer parks
 a tab, it closes it and ends the agent in it. If the tab is its space's last
-one, a fresh tab is opened first so the space stays. A finished agent is one
-hover click away from being cleaned up, and the tab bar stays empty of old work.
+one, the space closes with it (it stays in New agent's project list). A
+finished agent is one hover click away from being cleaned up, and the tab bar
+stays empty of old work. The same mod also draws a Terminals list under the
+agents, and the layout has no Spaces list: spaces are plumbing.
 
 ![Agents (settle closes)](preview.png)
 
@@ -48,9 +50,8 @@ newest settle first.
   appear at the right — pin (top) and archive (Settle). Tooltip: "Settle: close
   its tab and end it". Working and blocked agents show only the pin, so a
   stray click cannot kill a running turn.
-- **Click Settle**: with other tabs in the space, `tab.close {id}`. On the
-  space's last tab, `tab.new {space, folder}` opens a replacement in the same
-  folder first, then `tab.close {id}` closes the old tab. On the last tab of a
+- **Click Settle**: `tab.close {id}`. On the last tab of an unmanaged space
+  that closes the space too; no replacement tab is opened. On the last tab of a
   linked worktree under `.herdr/worktrees`: clean and merged into the main
   checkout's branch runs `space.close` then `git worktree remove` (no `--force`,
   the branch stays); anything else opens the shipped `worktree` dialog with
@@ -75,28 +76,84 @@ newest settle first.
 - **Settle** here is destructive and only offered for finished agents. The
   built-in `tab.settle` command is untouched and still parks.
 
+## Terminals block
+
+The layout's `terminals` block is `{mod: "agents-clean", props: {terminals:
+true}}`: the same mod, drawn as a plain list. `terminals.js` (pure, no herdr
+import) gives one row per tab without an agent: no `agents()` entry for the
+tab and no pane with a `status`. Settled tabs and tabs of only mod panes are
+left out; order is spaces, then tabs.
+
+- **Header** "Terminals" like the Agents one, with `+` ("New terminal") opening
+  `new-agent` with `props: { agent: "terminal" }`. No sort, pins, groups or
+  collapse footer.
+- **Row**: shell icon (`icons/shell.svg`), the tab name (the space name when
+  the tab has no name of its own) and a dim line with the pane's folder, home
+  as `~`, prefixed `<machine> · ` for a remote space. 30px, 44px with the
+  line; `selected` when focused. Click: `pane.focus {pane}`.
+- **Hover**: one archive button, tooltip "Close terminal", calls the same
+  `settleTab` as an agent (`close.js`), so a worktree's removal rules apply.
+  A shell has no idle or done to wait for, so it is always offered.
+- **Empty**: "No terminals. + opens one." **Narrow rail (<160px)**: one 26px
+  line per terminal with the icon only.
+
 ## New agent dialog
 
 Mod `new-agent`, opened by `ctrl-shift-a` (`mod.open:new-agent`) or the `+`: a
-560×560 dialog with a list of spaces, agent chips with a *Set as
-default* link, a task input, a New worktree checkbox with a branch input and a
-Start button.
+560×560 dialog with a project filter input, a list of projects, agent chips
+with a *Set as default* link, a task input, a New worktree checkbox with a
+branch input and a Start button.
 
-- The list is the open local spaces, one row per folder: a space is keyed by
-  the live `cwd` of its first tab, else its `folder`, and the active space
-  comes first. Spaces on other machines are left out. A new space is made with
-  Spaces `+`; the dialog has no folder picker.
-- `init` builds the rows from memory (one `spaces()` and one `panes()` call)
-  and paints synchronously. No `exec`, git, scan or agent check runs on open.
+- The list is projects, one row per folder. The open local spaces come first
+  (`projectsFromSpaces`): a space is keyed by the live `cwd` of its first tab,
+  else its `folder`, and the active space comes first. Spaces on other machines
+  are left out. Then the remembered projects without a space
+  (`projectList(spaceRows, recent, spaces)`), most recent first; a remembered
+  folder equal to a space row's key, or to the `folder` of that row's space,
+  merges into the space row.
+- `init` builds the rows from memory (one `spaces()` and one `panes()` call,
+  plus `shared("new-agent.recent")`) and paints synchronously. No `exec`, git,
+  scan or agent check runs on open, and nothing is written to `shared`.
+- History is `new-agent.recent`, plain JSON `[{folder, name, git}]`, newest
+  first, deduped by folder, capped at 30 (`readRecent`, `rememberProject`; a
+  missing or garbage value reads as empty). It is written with `setShared`
+  only on Start, after the launch: the repo's main checkout (`repo.main`, from
+  the worktree start's `repoOf`, or one `repoOf` call for a git project), else
+  the launched folder; `name` is its last path segment. The stored `git` makes
+  the worktree switch work for a project without a space.
+- The *Filter projects* input (`filterProjects`) matches a case- and
+  diacritic-insensitive substring of the name, the folder and its `~` form. A
+  selection that is filtered out moves to the first visible row; with no match
+  nothing is selected, Start is dimmed and the list says "No matching
+  projects." Up and down move within the visible rows; Enter in the filter
+  starts. The task input has the initial focus; `tab` cycles filter, task and
+  (worktree on) branch.
+- The last row *Other folder…*, or `alt-o`, calls `pickFolder()`. Cancel
+  changes nothing. A picked folder is merged into a row that already lists it,
+  else added as a project (one `repoOf` call decides `git`); it is selected and
+  the filter is cleared. It is remembered only when Start runs.
 - Agent chips come from `shared("new-agent.agents")` (plain
   `{key,name,icon,tint,run}` entries). When that is missing or empty, one deferred `exec` checks the
   agent commands on PATH
   (after 800 ms, so the first frames paint) replaces the installed ones. *Set as
   default* writes `new-agent.preferred`; without one the last used agent
   (`new-agent.agent`) is selected. A chip click changes only this launch.
-- A row is git when its space shows a `branch`. The checkbox starts off and is
-  unavailable outside git. A space with an agent working or blocked is noted
-  on the row. A click or `alt-w` toggles it; on shows a branch input with
+- `props.agent` (a chip key, e.g. `terminal` from the Terminals `+`) selects
+  that chip for this launch when it is among the choices: `pickAgent(agents,
+  preferred, last, requested)` ranks requested, preferred, last, first. It is
+  not written to `new-agent.preferred` or `new-agent.agent` until Start, and the
+  deferred agent check applies it again when it re-picks.
+- The last chip is always `TERMINAL` (`logic.js`: key `terminal`, icon
+  `icons/shell.svg`, empty `run`). It is added to the chips at render time and
+  to `alt-a`'s cycle, is not in `AGENTS` and is never stored in
+  `new-agent.agents`, so it shows while checking and with no agents. It can be
+  the default or last used (`terminal`). `agentArgv` returns no argv, and
+  `unsupported` when a task is given ("Terminal can't take a task. Clear it or
+  pick an agent."). `launchPlan` then drops `argv`, `task` and the tab name:
+  `tab.new {space, folder}` or `space.new {folder}` (the worktree path when on).
+- A row is git when its space shows a `branch` (or its stored entry says so).
+  The checkbox starts off and is unavailable outside git. A space with an
+  agent working or blocked is noted on the row. A click or `alt-w` toggles it; on shows a branch input with
   `branchName(task)` that follows the task until edited.
 - A task goes through the agent's own flag; Herdr appends its stock positional
   `task` only for the rest:
@@ -109,7 +166,7 @@ Start button.
   | every other agent | Herdr's positional `task` |
 
 - Off: `space.select`, then `tab.new` in the space (folder = the row's key), or
-  `space.new {folder}` when the space has gone.
+  `space.new {folder}` when the project has no space or the space has gone.
 - On: one `git rev-parse --show-toplevel --path-format=absolute
   --git-common-dir` in the row's folder (`parseRepo`), `for-each-ref` for a
   unique name unless the branch was typed, `show-ref`, then `git worktree add`
@@ -118,7 +175,7 @@ Start button.
   one), unnamed so the sidebar nests it under its repo. A folder outside git
   reports "Not a git repository".
 - Enter, including with no input focused after a click, or the Start button
-  runs the launch. Start is dimmed until a space and an agent are chosen and
+  runs the launch. Start is dimmed until a project and an agent are chosen and
   cannot fire twice.
 - The shipped `worktree` dialog is not reused: it cannot pass a task.
 
@@ -127,8 +184,9 @@ Start button.
 - Layout `main-settle`: a clone of the shipped `main` layout. Nodes:
   `root` (row) → `sidebar` (column, 268px, min 44, max 480, `chrome`
   background) with `brand` (workspace-chrome, 46px, window drag),
-  `sidebar-lists` (spaces weight 1, min 90; `agents` block weight 1, min 90,
-  content `{mod: "agents-clean"}`), `sidebar-footer` (workspace-chrome,
+  `sidebar-lists` (`agents` block weight 2, min 90, content
+  `{mod: "agents-clean"}`; `terminals` block weight 1, min 90, content
+  `{mod: "agents-clean", props: {terminals: true}}`; no spaces list), `sidebar-footer` (workspace-chrome,
   `footer: true`, 69px); and `work` (column) with `tabs` (tabs mod, 42px),
   `work-body` (row: `main` active tab pane with `pane` header 30px, and
   `panel` stack with `files` / `changes`, 368px, hidden), `status`
@@ -141,7 +199,7 @@ Start button.
   setAgentOrder, openOverlay, closeOverlay, props, window, layout` from
   `herdr`. State: `localStorage` keys `changed`, `pins`, `panels` (none here),
   `shared("agents.sort")`, `shared("sidebar.width")` / `sidebar.collapsed`.
-- Commands used: `pane.focus`, `terminal.peek`, `tab.new`, `tab.close`,
+- Commands used: `pane.focus`, `terminal.peek`, `tab.close`,
   `tab.unsettle`, `space.close`, `layout.resize`, `layout.select`,
   `layout.show`, `layout.hide`. Assets: `mods/workspace-chrome/{spinner,check,chevron-down,
   chevron-right,pin,pin-off,minus,archive,clock,layers,plus}.svg` and the
@@ -156,15 +214,12 @@ Start button.
 
 - **Settle is destructive.** `tab.close` ends the terminal. That is why the
   button is gated on `idle` / `done`; do not widen it to `working` casually.
-- Closing the last tab of a space closes the space, so `settleTab` must create
-  the replacement tab **before** `tab.close`; reversing the two loses the
-  space. Commands apply in the order they are run, but a close lands on a later
+- Closing the last tab of a space closes the space; that is intended now, so
+  `settleTab` opens no replacement tab. Commands apply in the order they are run, but a close lands on a later
   tick: `spaces()` stays stale until it does, which is why `Settle all` waits
   for each closed tab to go. A task that calls `run()` in the click's own turn
   never wakes from its next `await`, so `Settle all` does an `exec` first.
-- `tab.new` wants a folder that exists on that space's machine; the code takes
-  the tab's pane `cwd` and falls back to `space.folder`. Remote spaces carry
-  `machine/`-prefixed ids — pass them through unchanged.
+- Remote spaces carry `machine/`-prefixed ids — pass them through unchanged.
 - This is a copy of a shipped mod: upstream fixes to the Agents panel do not
   arrive here. When Herdr updates `mods/agents` (check `installed.json`), copy
   it again and re-apply `settleTab` + the settle button.
@@ -188,8 +243,10 @@ Start button.
   pin.
 - Clicking archive on an agent in a space with several tabs closes that tab;
   the tab bar loses the tab and the space keeps its other tabs.
-- Clicking archive on a space's only tab leaves exactly one new tab in that
-  space (same folder) and the space stays in the spaces list.
+- Clicking archive on an unmanaged space's only tab closes the tab and the
+  space; the project is still listed in New agent.
+- The Terminals `+` opens New agent with the Terminal chip selected, and
+  closing a terminal row archives its tab.
 - "Settle all (N)" closes the finished agents in that group and nothing else.
 - `ctrl-shift-a` lists a repo once, and starting with the checkbox off adds a
   tab to that repo's space; with it on, a nested space on a new branch.
