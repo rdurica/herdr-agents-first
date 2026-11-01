@@ -10,6 +10,7 @@ const {
   worktreePath,
   projectsFromSpaces,
   AGENTS,
+  TERMINAL,
   agentProbe,
   installedAgents,
   wantsWorktree,
@@ -17,6 +18,10 @@ const {
   agentArgv,
   launchPlan,
   parseRepo,
+  readRecent,
+  rememberProject,
+  projectList,
+  filterProjects,
 } = await loadMod("mods/new-agent/logic.js");
 
 describe("slugify", () => {
@@ -258,6 +263,27 @@ describe("pickAgent", () => {
     assert.equal(pickAgent(agents, undefined, undefined), "claude");
     assert.equal(pickAgent(agents, null, "codex"), "codex");
   });
+
+  test("a requested agent wins over the preferred and the last one", () => {
+    assert.equal(pickAgent(agents, "codex", "claude", "gemini"), "gemini");
+  });
+
+  test("ignores a requested agent that is not installed", () => {
+    assert.equal(pickAgent(agents, "codex", "claude", "aider"), "codex");
+    assert.equal(pickAgent(agents, "aider", "gemini", "amp"), "gemini");
+    assert.equal(pickAgent(agents, null, null, "amp"), "claude");
+  });
+
+  test("works without a requested agent", () => {
+    assert.equal(pickAgent(agents, "codex", "claude", null), "codex");
+    assert.equal(pickAgent(agents, "codex", "claude", undefined), "codex");
+  });
+
+  test("a requested terminal is picked when it is among the choices", () => {
+    const withTerminal = [...agents, { key: "terminal" }];
+    assert.equal(pickAgent(withTerminal, "claude", "codex", "terminal"), "terminal");
+    assert.equal(pickAgent(agents, "claude", "codex", "terminal"), "claude");
+  });
 });
 
 describe("launchPlan", () => {
@@ -468,5 +494,291 @@ describe("agent discovery without knownAgents", () => {
 
   test("finds nothing in empty output", () => {
     assert.deepEqual(installedAgents(""), []);
+  });
+});
+
+describe("readRecent", () => {
+  const entry = (folder, name, git = false) => ({ folder, name, git });
+
+  test("reads a stored list of projects as it is", () => {
+    const stored = [entry("/work/api", "api", true), entry("/work/site", "site", false)];
+
+    assert.deepEqual(readRecent(stored), stored);
+  });
+
+  test("reads a missing or garbage stored value as an empty list", () => {
+    for (const value of [undefined, null, "not json", 42, true, {}, { folder: "/work/api" }]) {
+      assert.deepEqual(readRecent(value), [], `value: ${JSON.stringify(value)}`);
+    }
+  });
+
+  test("drops invalid entries and keeps the valid ones in order", () => {
+    const good = entry("/work/api", "api", true);
+    const also = entry("/work/site", "site", false);
+
+    const list = readRecent([
+      null,
+      "text",
+      42,
+      [],
+      {},
+      { folder: "", name: "empty", git: false },
+      { folder: 7, name: "number", git: false },
+      { name: "no folder", git: true },
+      good,
+      also,
+    ]);
+
+    assert.deepEqual(list, [good, also]);
+  });
+});
+
+describe("rememberProject", () => {
+  const entry = (folder, name = folder.split("/").pop(), git = false) => ({ folder, name, git });
+
+  test("puts the project first in an empty list", () => {
+    assert.deepEqual(rememberProject([], entry("/work/api", "api", true)), [entry("/work/api", "api", true)]);
+  });
+
+  test("puts the newest project first", () => {
+    const list = rememberProject([entry("/work/api")], entry("/work/site"));
+
+    assert.deepEqual(
+      list.map((p) => p.folder),
+      ["/work/site", "/work/api"],
+    );
+  });
+
+  test("dedupes by folder, moving the project to the front with its new values", () => {
+    const before = [entry("/work/api", "api", false), entry("/work/site"), entry("/work/blog")];
+
+    const list = rememberProject(before, entry("/work/site", "site", true));
+
+    assert.deepEqual(list, [entry("/work/site", "site", true), entry("/work/api", "api", false), entry("/work/blog")]);
+  });
+
+  test("caps the list at 30 projects by default, dropping the oldest", () => {
+    let list = [];
+    for (let i = 0; i < 35; i++) list = rememberProject(list, entry(`/work/p${i}`));
+
+    assert.equal(list.length, 30);
+    assert.equal(list[0].folder, "/work/p34");
+    assert.equal(list[29].folder, "/work/p5");
+  });
+
+  test("takes the cap as an argument", () => {
+    const list = rememberProject([entry("/a"), entry("/b"), entry("/c")], entry("/d"), 2);
+
+    assert.deepEqual(
+      list.map((p) => p.folder),
+      ["/d", "/a"],
+    );
+  });
+
+  test("does not change the list it was given", () => {
+    const before = Object.freeze([Object.freeze(entry("/work/api"))]);
+
+    const list = rememberProject(before, entry("/work/site"));
+
+    assert.equal(before.length, 1);
+    assert.equal(list.length, 2);
+  });
+});
+
+describe("projectList", () => {
+  const row = (over = {}) => ({ key: "/repo/app", name: "app", git: true, space: "sp-1", busy: false, ...over });
+  const space = (over = {}) => ({ id: "sp-1", name: "app", folder: "/repo/app", cwd: "/repo/app", machine: null, ...over });
+  const hist = (folder, name = folder.split("/").pop(), git = false) => ({ folder, name, git });
+
+  test("lists the open spaces first, then remembered projects without a space", () => {
+    const rows = projectList(
+      [row({ key: "/a", name: "a", space: "sp-a" }), row({ key: "/b", name: "b", space: "sp-b" })],
+      [hist("/work/api", "api", true), hist("/work/site", "site", false)],
+    );
+
+    assert.deepEqual(rows, [
+      { key: "/a", name: "a", git: true, space: "sp-a", busy: false },
+      { key: "/b", name: "b", git: true, space: "sp-b", busy: false },
+      { key: "/work/api", name: "api", git: true, space: null, busy: false },
+      { key: "/work/site", name: "site", git: false, space: null, busy: false },
+    ]);
+  });
+
+  test("keeps remembered projects in most recently started order", () => {
+    const rows = projectList([], [hist("/new"), hist("/mid"), hist("/old")]);
+
+    assert.deepEqual(
+      rows.map((r) => r.key),
+      ["/new", "/mid", "/old"],
+    );
+  });
+
+  test("merges a remembered project into the open space with the same live folder", () => {
+    const rows = projectList(
+      [row({ key: "/repo/app/packages/web", name: "web", space: "sp-1", busy: true })],
+      [hist("/repo/app/packages/web", "web", false)],
+      [space({ cwd: "/repo/app/packages/web" })],
+    );
+
+    assert.deepEqual(rows, [{ key: "/repo/app/packages/web", name: "web", git: true, space: "sp-1", busy: true }]);
+  });
+
+  test("merges a remembered project into the open space whose folder matches, not its live cwd", () => {
+    const rows = projectList(
+      [row({ key: "/repo/app/packages/web", name: "app", space: "sp-1" })],
+      [hist("/repo/app", "app", true), hist("/work/api", "api", true)],
+      [space({ id: "sp-1", folder: "/repo/app", cwd: "/repo/app/packages/web" })],
+    );
+
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.space]),
+      [
+        ["/repo/app/packages/web", "sp-1"],
+        ["/work/api", null],
+      ],
+    );
+  });
+
+  test("shows a folder once even when several remembered entries and spaces share it", () => {
+    const rows = projectList(
+      [row({ key: "/a", space: "sp-a" })],
+      [hist("/a"), hist("/b"), hist("/a")],
+    );
+
+    assert.deepEqual(
+      rows.map((r) => r.key),
+      ["/a", "/b"],
+    );
+  });
+
+  test("returns nothing when there are no spaces and no history", () => {
+    assert.deepEqual(projectList([], []), []);
+  });
+});
+
+describe("filterProjects", () => {
+  const rows = [
+    { key: "/home/me/work/Příliš", name: "Příliš", git: true, space: "sp-1", busy: false },
+    { key: "/home/me/projects/api", name: "api", git: true, space: null, busy: false },
+    { key: "/srv/Site", name: "Site", git: false, space: null, busy: false },
+  ];
+  const home = "/home/me";
+  const names = (list) => list.map((r) => r.name);
+
+  test("returns every row for an empty or blank filter", () => {
+    assert.deepEqual(filterProjects(rows, "", home), rows);
+    assert.deepEqual(filterProjects(rows, "   ", home), rows);
+  });
+
+  test("matches a substring of the name, ignoring case", () => {
+    assert.deepEqual(names(filterProjects(rows, "SIT", home)), ["Site"]);
+    assert.deepEqual(names(filterProjects(rows, "pi", home)), ["api"]);
+  });
+
+  test("ignores diacritics on both sides", () => {
+    assert.deepEqual(names(filterProjects(rows, "prilis", home)), ["Příliš"]);
+    assert.deepEqual(names(filterProjects(rows, "PŘÍL", home)), ["Příliš"]);
+  });
+
+  test("matches a substring of the raw folder path", () => {
+    assert.deepEqual(names(filterProjects(rows, "me/projects", home)), ["api"]);
+    assert.deepEqual(names(filterProjects(rows, "/srv", home)), ["Site"]);
+  });
+
+  test("matches the ~ form of the folder path", () => {
+    assert.deepEqual(names(filterProjects(rows, "~/projects", home)), ["api"]);
+    assert.deepEqual(names(filterProjects(rows, "~/work", home)), ["Příliš"]);
+  });
+
+  test("does not read ~ into folders outside the home folder", () => {
+    assert.deepEqual(filterProjects(rows, "~/srv", home), []);
+  });
+
+  test("keeps the order of the rows and returns nothing when nothing matches", () => {
+    assert.deepEqual(names(filterProjects(rows, "i", home)), ["Příliš", "api", "Site"]);
+    assert.deepEqual(filterProjects(rows, "zzz", home), []);
+  });
+
+  test("does not change the rows it was given", () => {
+    const frozen = Object.freeze(rows.map((r) => Object.freeze({ ...r })));
+
+    assert.equal(filterProjects(frozen, "api", home).length, 1);
+  });
+});
+
+describe("TERMINAL", () => {
+  test("is the shell chip: its own key, the shell icon, tinted, with nothing to run", () => {
+    assert.equal(TERMINAL.key, "terminal");
+    assert.equal(TERMINAL.name, "Terminal");
+    assert.equal(TERMINAL.icon, "icons/shell.svg");
+    assert.equal(TERMINAL.tint, true);
+    assert.deepEqual(TERMINAL.run, []);
+  });
+
+  test("is not part of the probe table", () => {
+    assert.ok(!AGENTS.some((a) => a.key === "terminal"));
+  });
+});
+
+describe("agentArgv for the terminal", () => {
+  test("starts the shell with no argv and no task when none is given", () => {
+    for (const task of ["", "   ", undefined, null]) {
+      const result = agentArgv(TERMINAL, task);
+
+      assert.equal(result.argv, undefined);
+      assert.ok(!Object.hasOwn(result, "task"));
+      assert.ok(!result.unsupported);
+    }
+  });
+
+  test("cannot take a task", () => {
+    const result = agentArgv(TERMINAL, "  Fix it  ");
+
+    assert.equal(result.unsupported, true);
+    assert.ok(!Object.hasOwn(result, "task"));
+  });
+});
+
+describe("launchPlan for the terminal", () => {
+  const project = { key: "/repo/app", name: "app", git: true, space: "sp-1", at: 0 };
+
+  test("opens a bare tab in the project's open space: no argv, task or tab name", () => {
+    assert.deepEqual(launchPlan({ project, agent: TERMINAL, task: "", worktree: false }), [
+      ["space.select", { id: "sp-1" }],
+      ["tab.new", { space: "sp-1", folder: "/repo/app" }],
+    ]);
+  });
+
+  test("opens a bare space on the project when it has no space", () => {
+    const noSpace = { key: "/repo/app", name: "app", git: true, space: null, at: 0 };
+
+    assert.deepEqual(launchPlan({ project: noSpace, agent: TERMINAL, task: "", worktree: false }), [
+      ["space.new", { folder: "/repo/app" }],
+    ]);
+  });
+
+  test("starts the shell in the new worktree with a bare space", () => {
+    assert.deepEqual(
+      launchPlan({ project, agent: TERMINAL, task: "", worktree: true, path: "/home/me/.herdr/worktrees/app/agent-x" }),
+      [["space.new", { folder: "/home/me/.herdr/worktrees/app/agent-x" }]],
+    );
+  });
+});
+
+describe("pickAgent with the terminal", () => {
+  const terminal = { key: "terminal" };
+  const agents = [{ key: "claude" }, { key: "codex" }, terminal];
+
+  test("picks the terminal as the preferred agent", () => {
+    assert.equal(pickAgent(agents, "terminal", "claude"), "terminal");
+  });
+
+  test("picks the terminal as the last used agent", () => {
+    assert.equal(pickAgent(agents, "aider", "terminal"), "terminal");
+  });
+
+  test("picks the terminal when it is the only choice", () => {
+    assert.equal(pickAgent([terminal], "claude", "codex"), "terminal");
+    assert.equal(pickAgent([terminal], null, null), "terminal");
   });
 });

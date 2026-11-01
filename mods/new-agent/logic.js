@@ -60,16 +60,77 @@ export function projectsFromSpaces(spaces, active = null) {
   return list;
 }
 
+// Home as ~ (git says C:/Users/x where Windows says C:\Users\x).
+export function tilde(path, userHome) {
+  const [p, h] = [path, userHome].map((s) => String(s ?? "").replace(/\\/g, "/"));
+  if (!h || !p.startsWith(`${h}/`)) return p === h ? "~" : path;
+  return `~${p.slice(h.length)}`;
+}
+
+// The remembered projects as plain { folder, name, git } entries. A missing or
+// garbage stored value is an empty list; an entry without a folder is dropped.
+export function readRecent(value) {
+  if (!Array.isArray(value)) return [];
+  const list = [];
+  for (const e of value) {
+    if (!e || typeof e !== "object" || Array.isArray(e)) continue;
+    if (typeof e.folder !== "string" || !e.folder) continue;
+    list.push({
+      folder: e.folder,
+      name: typeof e.name === "string" && e.name ? e.name : e.folder.split(/[\\/]/).filter(Boolean).pop() ?? e.folder,
+      git: Boolean(e.git),
+    });
+  }
+  return list;
+}
+
+// The project first, once per folder, the oldest dropped past the cap.
+export function rememberProject(recent, entry, cap = 30) {
+  const rest = recent.filter((e) => e.folder !== entry.folder);
+  return [{ folder: entry.folder, name: entry.name, git: Boolean(entry.git) }, ...rest].slice(0, cap);
+}
+
+// The open spaces' rows, then remembered projects that no open space shows. A
+// space shows a folder by its live folder (the row's key) or the folder it was
+// made in; either one swallows the history entry. A folder is listed once.
+export function projectList(spaceRows, recent, spaces = []) {
+  const taken = new Set();
+  for (const row of spaceRows) {
+    taken.add(row.key);
+    const folder = spaces.find((s) => s.id === row.space)?.folder;
+    if (folder) taken.add(folder);
+  }
+  const rows = [...spaceRows];
+  for (const e of recent) {
+    if (taken.has(e.folder)) continue;
+    taken.add(e.folder);
+    rows.push({ key: e.folder, name: e.name, git: Boolean(e.git), space: null, busy: false });
+  }
+  return rows;
+}
+
+const simple = (text) => fold(text).toLowerCase();
+
+// Rows whose name or folder (as written, or with home as ~) holds the query,
+// ignoring case and accents. A blank query keeps every row.
+export function filterProjects(rows, query, home) {
+  const q = simple(String(query ?? "").trim());
+  if (!q) return rows;
+  return rows.filter((r) => [r.name, r.key, tilde(r.key, home)].some((s) => simple(s).includes(q)));
+}
+
 // A worktree is only possible in git, and it starts off: only an explicit
 // choice turns it on, whatever the other agents are doing.
 export function wantsWorktree({ git, choice }) {
   return Boolean(git && choice);
 }
 
-// The preferred agent when it is installed, else the last one used, else the
-// first installed one. null when there is nothing to start.
-export function pickAgent(agents, preferred, last) {
+// The agent the opener asked for when it is installed (the Terminals + asks for
+// a terminal), else the preferred one, else the last one used, else the first
+// installed one. null when there is nothing to start.
+export function pickAgent(agents, preferred, last, requested) {
   const keys = agents.map((a) => a.key);
+  if (requested && keys.includes(requested)) return requested;
   if (preferred && keys.includes(preferred)) return preferred;
   if (last && keys.includes(last)) return last;
   return keys[0] ?? null;
@@ -92,6 +153,9 @@ const taskFlags = {
 export function agentArgv(agent, task) {
   const trimmed = String(task ?? "").trim();
   const run = agent.run;
+  // A terminal has nothing to run, so Herdr opens its shell, and nothing to
+  // hand a task to.
+  if (agent.key === TERMINAL.key) return trimmed ? { unsupported: true } : {};
   if (!trimmed) return { argv: run };
   // Kimi has no flag for a first prompt, so it must start without a task.
   if (agent.key === "kimi") return { argv: run, unsupported: true };
@@ -114,6 +178,18 @@ export function parseRepo(text) {
 // The commands that start the agent, in order. Spaces stay unnamed so Herdr
 // names them after their folder and nests worktrees under their repo.
 export function launchPlan({ project, agent, task, worktree, path }) {
+  // A terminal is a bare tab or space: no argv, task or name, so Herdr opens
+  // its shell and names the tab itself.
+  if (agent.key === TERMINAL.key) {
+    if (worktree) return [["space.new", { folder: path }]];
+    if (project.space) {
+      return [
+        ["space.select", { id: project.space }],
+        ["tab.new", { space: project.space, folder: project.key }],
+      ];
+    }
+    return [["space.new", { folder: project.key }]];
+  }
   const delivery = agentArgv(agent, task);
   const withTask = delivery.task ? { task: delivery.task } : {};
   if (worktree) {
@@ -148,6 +224,10 @@ export const AGENTS = [
   agent("qoder", "Qoder", "qodercli", true),
   agent("crush", "Crush", "crush", false),
 ];
+
+// The shell chip, always offered last: it runs nothing, so Herdr opens its
+// shell. Not part of the probe table and never stored with the agents.
+export const TERMINAL = { key: "terminal", name: "Terminal", icon: "icons/shell.svg", tint: true, run: [] };
 
 // One `exec` that prints the path of every agent command on PATH.
 export function agentProbe() {

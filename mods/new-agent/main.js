@@ -1,17 +1,19 @@
-// New agent: pick an open space, an installed agent and an optional task. It
-// starts a tab in the space's folder by default; the worktree switch adds a
-// linked checkout on its own branch. Everything the dialog draws on open comes
-// from memory: no exec, git or scans hold up the first frame.
+// New agent: pick a project (an open space, a remembered project or any folder),
+// an installed agent and an optional task. It starts a tab in the space's
+// folder by default, or a new space for a project without one; the worktree
+// switch adds a linked checkout on its own branch. Everything the dialog draws
+// on open comes from memory: no exec, git or scans hold up the first frame.
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import {
   spaces, panes, exec, home,
-  run, theme, props, closeOverlay, shared, setShared,
+  run, theme, props, closeOverlay, shared, setShared, pickFolder,
 } from "herdr";
 import {
-  agentProbe, installedAgents, branchName, uniqueBranch, worktreePath, projectsFromSpaces,
+  TERMINAL, agentProbe, installedAgents, branchName, uniqueBranch, worktreePath, projectsFromSpaces,
   wantsWorktree, pickAgent, agentArgv, launchPlan, parseRepo,
+  tilde, readRecent, rememberProject, projectList, filterProjects,
 } from "./logic.js";
 
 
@@ -33,12 +35,8 @@ function tabFolders() {
   return map;
 }
 
-// Home as ~ (git says C:/Users/x where Windows says C:\Users\x).
-const tilde = (path, userHome) => {
-  const [p, h] = [path, userHome].map((s) => String(s ?? "").replace(/\\/g, "/"));
-  if (!h || !p.startsWith(`${h}/`)) return p === h ? "~" : path;
-  return `~${p.slice(h.length)}`;
-};
+// The last segment of a folder, which names a project that has no space.
+const baseName = (folder) => folder.split(/[\\/]/).filter(Boolean).pop() ?? folder;
 
 async function git(cwd, args) {
   const r = await exec("git", args, { cwd });
@@ -78,25 +76,43 @@ export default class NewAgent extends View {
     this.handle = cx.focus_handle();
     const list = spaces();
     const cwdByTab = tabFolders();
-    this.projects = projectsFromSpaces(
+    this.openSpaces = list;
+    this.spaceRows = projectsFromSpaces(
       list.map((s) => ({ ...s, cwd: place(s, cwdByTab) })),
       list.find((s) => s.active)?.id ?? null,
     );
+    this.recent = this.readRecentProjects();
+    this.picked = []; // folders chosen with Other folder, until Start remembers one
+    this.projects = projectList(this.spaceRows, this.recent, this.openSpaces);
     this.selKey = this.projects[0]?.key ?? null;
+    this.query = "";
+    this.picking = false;
     this.choice = false; // a worktree starts off; only a click or alt-w turns it on
     this.task = "";
     this.branchEdited = false;
     this.autoBranch = "";
     this.preferred = this.readString("new-agent.preferred");
+    // The opener's choice (the Terminals +) is for this launch only: it is not
+    // written to the preferred agent until Start.
+    this.requested = props()?.agent;
     this.agentTouched = false; // the person picked an agent
     this.busy = false; // starting, not the space's agent status
     this.error = "";
-    this.focused = { task: true, branch: false };
+    this.focused = { filter: false, task: true, branch: false };
 
     this.agents = this.readAgents();
     this.agentsJson = JSON.stringify(this.agents);
     this.checking = !this.agents.length;
-    this.agentKey = pickAgent(this.agents, this.preferred, this.readString("new-agent.agent"));
+    this.agentKey = pickAgent(this.choices(), this.preferred, this.readString("new-agent.agent"), this.requested);
+
+    this.filterInput = InputState.new({ placeholder: "Filter projects" });
+    this.filterInput.on("change", (_e, cx) => {
+      this.query = this.filterInput.value();
+      this.applyFilter(cx);
+    });
+    this.filterInput.on("submit", (_e, cx) => this.start(cx));
+    this.filterInput.on("focus", () => { this.focused.filter = true; });
+    this.filterInput.on("blur", () => { this.focused.filter = false; });
 
     this.taskInput = InputState.new({ placeholder: "What should it do? (optional)" });
     this.taskInput.on("change", (_e, cx) => {
@@ -146,8 +162,8 @@ export default class NewAgent extends View {
             // Leave the remembered list and try again on a later open.
           }
           this.checking = false;
-          if (!this.agentTouched || !this.agents.some((a) => a.key === this.agentKey)) {
-            this.agentKey = pickAgent(this.agents, this.preferred, this.readString("new-agent.agent"));
+          if (!this.agentTouched || !this.choices().some((a) => a.key === this.agentKey)) {
+            this.agentKey = pickAgent(this.choices(), this.preferred, this.readString("new-agent.agent"), this.requested);
           }
           cx.notify();
         });
@@ -182,21 +198,92 @@ export default class NewAgent extends View {
     }
   }
 
+  // The remembered projects. Missing or garbage is an empty list.
+  readRecentProjects() {
+    try {
+      return readRecent(shared("new-agent.recent"));
+    } catch {
+      return [];
+    }
+  }
+
   project() {
     return this.projects.find((p) => p.key === this.selKey) ?? null;
   }
 
-  select(project, cx) {
-    if (!project) return;
-    const changed = project.key !== this.selKey;
-    this.selKey = project.key;
+  // The rows the filter lets through, in list order.
+  visible() {
+    return filterProjects(this.projects, this.query, home());
+  }
+
+  // Selecting without drawing; a different project starts with the switch off.
+  choose(project) {
+    const key = project?.key ?? null;
+    const changed = key !== this.selKey;
+    this.selKey = key;
     if (changed) {
       this.choice = false;
       this.branchEdited = false;
       this.syncBranch();
     }
+  }
+
+  select(project, cx) {
+    if (!project) return;
+    this.choose(project);
     this.error = "";
     cx.notify();
+  }
+
+  // Typing in the filter: a selection that is filtered out moves to the first
+  // visible row, or to nothing when no row matches.
+  applyFilter(cx) {
+    const rows = this.visible();
+    if (!rows.some((p) => p.key === this.selKey)) this.choose(rows[0] ?? null);
+    this.error = "";
+    cx.notify();
+  }
+
+  // Other folder: the system picker. A picked folder joins the list (or is
+  // found in it), is selected and clears the filter. Nothing is remembered
+  // until Start.
+  pickOther(cx) {
+    if (this.picking || this.busy) return;
+    this.picking = true;
+    cx.spawn(async (cx) => {
+      try {
+        const folder = await pickFolder({ prompt: "Choose" });
+        if (!folder) return;
+        const key = folder.replace(/[\\/]+$/, "") || folder;
+        let target = this.findFolder(key);
+        if (!target) {
+          const repo = await repoOf(key);
+          this.picked = rememberProject(this.picked, { folder: key, name: baseName(key), git: Boolean(repo) });
+          this.projects = projectList(this.spaceRows, [...this.picked, ...this.recent], this.openSpaces);
+          target = this.findFolder(key);
+        }
+        this.query = "";
+        if (this.filterInput.value()) this.filterInput.set_value("");
+        this.choose(target);
+        this.error = "";
+        this.taskInput.focus();
+      } catch (error) {
+        this.error = String(error);
+      } finally {
+        this.picking = false;
+        cx.notify();
+      }
+    });
+  }
+
+  // The listed row that shows a folder: by its key, or as the folder an open
+  // space was made in.
+  findFolder(folder) {
+    return (
+      this.projects.find((p) => p.key === folder) ??
+      this.projects.find((p) => p.space && this.openSpaces.find((s) => s.id === p.space)?.folder === folder) ??
+      null
+    );
   }
 
   // The branch follows the task until the person types their own.
@@ -210,16 +297,21 @@ export default class NewAgent extends View {
   }
 
   move(delta, cx) {
-    const rows = this.projects;
+    const rows = this.visible();
     if (!rows.length) return;
     const i = rows.findIndex((p) => p.key === this.selKey);
     this.select(rows[((i < 0 ? 0 : i) + delta + rows.length) % rows.length], cx);
   }
 
+  // The installed agents, then the terminal, which is always there.
+  choices() {
+    return [...this.agents, TERMINAL];
+  }
+
   cycleAgent(cx) {
-    if (!this.agents.length) return;
-    const i = this.agents.findIndex((a) => a.key === this.agentKey);
-    this.agentKey = this.agents[(i + 1) % this.agents.length].key;
+    const choices = this.choices();
+    const i = choices.findIndex((a) => a.key === this.agentKey);
+    this.agentKey = choices[(i + 1) % choices.length].key;
     this.agentTouched = true;
     cx.notify();
   }
@@ -237,7 +329,7 @@ export default class NewAgent extends View {
   }
 
   nextField(cx) {
-    const order = [["task", this.taskInput]];
+    const order = [["filter", this.filterInput], ["task", this.taskInput]];
     if (this.worktreeOn()) order.push(["branch", this.branchInput]);
     const i = order.findIndex(([name]) => this.focused[name]);
     order[(i + 1) % order.length][1].focus();
@@ -254,18 +346,21 @@ export default class NewAgent extends View {
       cx.stop_propagation();
       return this.cycleAgent(cx);
     }
+    if (e.key === "o" && e.modifiers.alt) {
+      cx.stop_propagation();
+      return this.pickOther(cx);
+    }
     if (e.key === "w" && e.modifiers.alt) {
       cx.stop_propagation();
       return this.toggleWorktree(cx);
     }
     // An input that has the keyboard turns Enter into its own submit. With no
     // input focused (after a click on a row, say), Enter still starts.
-    if (e.key === "enter" && !this.focused.task && !this.focused.branch) {
+    if (e.key === "enter" && !this.focused.filter && !this.focused.task && !this.focused.branch) {
       cx.stop_propagation();
       return this.start(cx);
     }
-    // Arrows page the list unless the task or branch input is using them for
-    // the caret.
+    // Arrows page the list unless the branch input is using them for the caret.
     if ((e.key === "down" || e.key === "up") && !this.focused.branch) {
       cx.stop_propagation();
       this.move(e.key === "down" ? 1 : -1, cx);
@@ -275,9 +370,9 @@ export default class NewAgent extends View {
   start(cx) {
     if (this.busy) return;
     const project = this.project();
-    const agent = this.agents.find((a) => a.key === this.agentKey);
+    const agent = this.choices().find((a) => a.key === this.agentKey);
     if (!project) {
-      this.error = "Choose a space.";
+      this.error = "Choose a project.";
       return cx.notify();
     }
     if (!agent) {
@@ -287,7 +382,10 @@ export default class NewAgent extends View {
     // Some agents cannot take a task at startup; refuse before any git work so
     // nothing is created for a launch that would ignore or misread it.
     if (agentArgv(agent, this.taskInput.value()).unsupported) {
-      this.error = `${agent.name} can't start with a task. Clear it or pick another agent.`;
+      this.error =
+        agent.key === TERMINAL.key
+          ? `${agent.name} can't take a task. Clear it or pick an agent.`
+          : `${agent.name} can't start with a task. Clear it or pick another agent.`;
       return cx.notify();
     }
     const worktree = this.worktreeOn(project);
@@ -303,8 +401,9 @@ export default class NewAgent extends View {
     cx.spawn(async (cx) => {
       try {
         let path;
+        let repo = null;
         if (worktree) {
-          const repo = await repoOf(project.key);
+          repo = await repoOf(project.key);
           if (!repo) {
             this.error = "Not a git repository";
             this.busy = false;
@@ -335,6 +434,7 @@ export default class NewAgent extends View {
         if (!spaces().some((s) => s.id === project.space)) target.space = null;
         const plan = launchPlan({ project: target, agent, task, worktree, path });
         for (const [name, args] of plan) run(name, args);
+        await this.remember(project, repo);
         if (this.readString("new-agent.agent") !== agent.key) setShared("new-agent.agent", agent.key);
         closeOverlay(props().overlay);
       } catch (error) {
@@ -345,13 +445,33 @@ export default class NewAgent extends View {
     });
   }
 
+  // Start remembers the project: the main checkout when it is in git, else the
+  // folder itself. A failure here must not undo a launch that has happened.
+  async remember(project, repo) {
+    try {
+      let folder = project.key;
+      let inGit = false;
+      if (project.git || repo) {
+        const found = repo ?? (await repoOf(project.key));
+        if (found) {
+          folder = found.main;
+          inGit = true;
+        }
+      }
+      const stored = this.readRecentProjects();
+      setShared("new-agent.recent", rememberProject(stored, { folder, name: baseName(folder), git: inGit }));
+    } catch {
+      // The history is a convenience.
+    }
+  }
+
   render() {
     const t = theme();
     const project = this.project();
-    const rows = this.projects;
+    const rows = this.visible();
     const worktree = this.worktreeOn(project);
     const gitRepo = Boolean(project?.git);
-    const canStart = Boolean(project && this.agentKey && this.agents.some((a) => a.key === this.agentKey));
+    const canStart = Boolean(project && this.agentKey && this.choices().some((a) => a.key === this.agentKey));
 
     const projectRow = (p) => {
       const on = p.key === this.selKey;
@@ -373,6 +493,20 @@ export default class NewAgent extends View {
         .child(div().flex_1().min_w(0).truncate().text_color(on ? t.foreground : t.muted).child(p.name))
         .child(div().max_w(230).min_w(0).truncate().text_size(11.5).text_color(t.dim).child(tilde(p.key, home())));
     };
+
+    const otherRow = h_flex()
+      .id("na-other-folder")
+      .h(34)
+      .px(10)
+      .gap(8)
+      .flex_none()
+      .items_center()
+      .rounded(7)
+      .cursor_pointer()
+      .hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => this.pickOther(cx))
+      .child(div().flex_1().text_color(t.muted).child("Other folder\u2026"))
+      .child(div().text_size(11.5).text_color(t.dim).child("alt-o"));
 
     const chip = (a) => {
       const on = a.key === this.agentKey;
@@ -443,6 +577,7 @@ export default class NewAgent extends View {
           .child(div().flex_1().text_size(15).font_semibold().text_color(t.foreground).child("New agent"))
           .child(div().text_size(11).text_color(t.dim).child("Esc")),
       )
+      .child(input(this.filterInput))
       .child(
         v_flex()
           .id("na-projects")
@@ -450,7 +585,17 @@ export default class NewAgent extends View {
           .min_h(0)
           .overflow_y_scrollbar()
           .children(rows.map(projectRow))
-          .when(rows.length === 0, (el) => el.child(div().px(10).py(6).text_size(12).text_color(t.dim).child("No open spaces."))),
+          .when(rows.length === 0, (el) =>
+            el.child(
+              div()
+                .px(10)
+                .py(6)
+                .text_size(12)
+                .text_color(t.dim)
+                .child(this.projects.length ? "No matching projects." : "No projects yet. Use Other folder\u2026 to add one."),
+            ),
+          )
+          .child(otherRow),
       )
       .child(
         h_flex()
@@ -458,7 +603,7 @@ export default class NewAgent extends View {
           .items_center()
           .child(div().text_size(11).text_color(t.dim).child("Agent"))
           .child(div().flex_1())
-          .when(Boolean(this.agents.length && this.agentKey), (el) =>
+          .when(Boolean(this.agentKey), (el) =>
             el.child(
               h_flex()
                 .id("na-default-agent")
@@ -491,7 +636,7 @@ export default class NewAgent extends View {
           .items_center()
           .when(this.checking && !this.agents.length, (el) => el.child(div().text_size(12).text_color(t.dim).child("Checking installed agents\u2026")))
           .when(!this.checking && !this.agents.length, (el) => el.child(div().text_size(12).text_color(t.dim).child("No agents found")))
-          .children(this.agents.map(chip)),
+          .children(this.choices().map(chip)),
       )
       .child(input(this.taskInput))
       .child(
@@ -526,7 +671,7 @@ export default class NewAgent extends View {
             div()
               .flex_1()
               .text_color(t.dim)
-              .child("alt-w worktree \u00b7 alt-a agent \u00b7 esc close"),
+              .child("alt-o folder \u00b7 alt-w worktree \u00b7 alt-a agent \u00b7 esc close"),
           )
           .child(
             h_flex()
