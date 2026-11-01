@@ -1,14 +1,14 @@
 // What settling a tab does. Pure, so the test can drive every case.
 
 // keep: another agent in the tab is still busy, so closing it would kill that
-// turn; wait. close: another tab stays in the space. replace: the space is not
-// ours to remove, so give it a fresh tab first. remove: last managed tab, clean
-// and merged: the space and its worktree can go. ask: single settle leaves work
-// behind, so the person decides. skip: Settle all leaves it alone.
+// turn; wait. close: close the tab; if it is the last one of a space that is not
+// ours to remove, Herdr closes the space with it (it stays in the recent list).
+// remove: last managed tab, clean and merged: the space and its worktree can go.
+// ask: single settle leaves work behind, so the person decides. skip: Settle all
+// leaves it alone.
 export function settleAction({ lastTab, managed, dirty, merged, busy = false, batch = false }) {
   if (busy) return "keep";
-  if (!lastTab) return "close";
-  if (!managed) return "replace";
+  if (!lastTab || !managed) return "close";
   if (!dirty && merged) return "remove";
   return batch ? "skip" : "ask";
 }

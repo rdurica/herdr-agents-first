@@ -3,8 +3,10 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, exec, notify, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
-import { settleAction, isManaged, settleInTurn } from "./settle.js";
+import { agents, terminals, panes, focused, spaces, run, home, notify, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
+import { settleInTurn } from "./settle.js";
+import { git, settleTab, tabBusy } from "./close.js";
+import { terminalRows } from "./terminals.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -33,127 +35,6 @@ const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}~\/]+/u, "").trim();
 // OpenCode prefixes its terminal title with "OC | "; only the session name is news.
 const sessionTitle = (s) => clean(s).replace(/^OC\s*\|\s*/i, "");
 
-async function git(cwd, args, on) {
-  try {
-    const r = await exec("git", args, { cwd, on });
-    return { ok: r.code === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? r.stdout ?? "").trim() };
-  } catch (error) {
-    return { ok: false, out: "", err: String(error) };
-  }
-}
-
-// The checkout a space's last tab is in: whether Herdr made it, and whether it
-// still holds work. On any doubt (a git error) keep it: replace, or dirty and
-// not merged, so nothing is deleted on a guess.
-async function inspect(folder, on) {
-  if (!folder) return null;
-  const top = await git(folder, ["rev-parse", "--show-toplevel"], on);
-  if (!top.ok) return null;
-  const common = await git(folder, ["rev-parse", "--path-format=absolute", "--git-common-dir"], on);
-  if (!common.ok) return null;
-  const main = common.out.endsWith("/.git") ? common.out.slice(0, -5) : common.out;
-  if (!isManaged(top.out, main)) return { top: top.out, main, managed: false, dirty: true, merged: false };
-  const status = await git(top.out, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], on);
-  const dirty = !status.ok || status.out !== "";
-  let merged = false;
-  // Only branch-attached commits survive a worktree remove with their name: a
-  // detached HEAD (in the worktree or the main checkout) leaves the question
-  // open, and an open question never deletes.
-  const head = await git(top.out, ["symbolic-ref", "--quiet", "--short", "HEAD"], on);
-  const branch = await git(main, ["symbolic-ref", "--short", "HEAD"], on);
-  if (head.ok && head.out && branch.ok && branch.out) {
-    merged = (await git(top.out, ["merge-base", "--is-ancestor", "HEAD", `refs/heads/${branch.out}`], on)).ok;
-  }
-  return { top: top.out, main, managed: true, dirty, merged };
-}
-
-// A finished agent can share its tab with one still working; closing the tab
-// would end that turn too.
-const tabBusy = (tab) => tab?.status === "working" || tab?.status === "blocked";
-
-// Whether a folder is a checkout or inside it, across Windows and Unix slashes.
-const insidePath = (path, top) => {
-  const [p, t] = [path, top].map((s) => String(s ?? "").replace(/\\/g, "/").replace(/\/+$/, ""));
-  return Boolean(t) && (p === t || p.startsWith(`${t}/`));
-};
-
-// Another space (on the same machine) still shows this checkout: removing it
-// would pull the files out from under that terminal.
-const inUseElsewhere = (spaceId, top, on) =>
-  spaces().some(
-    (s) =>
-      s.id !== spaceId &&
-      (s.machine ?? null) === on &&
-      s.tabs.some((t) => panes().some((p) => p.tab === t.id && p.cwd && insidePath(p.cwd, top))),
-  );
-
-function keepTab(batch) {
-  if (!batch) notify({ title: "Tab kept", body: "An agent in it is still working or waiting.", level: "warning" });
-  return "keep";
-}
-
-// Closing a tab for settle; "closed" tells Settle all to wait for it to go.
-function closeTab(id) {
-  run("tab.close", { id });
-  return "closed";
-}
-
-// Settling ends the work: close its tab (and the terminal in it). A tab that is
-// its space's last one gets a new tab first, so the space stays instead of
-// closing with it; a managed worktree that is clean and merged goes with it.
-// Returns "closed", "keep" or "skip" for Settle all; the single settle ignores it.
-async function settleTab(spaceId, tabId, { batch = false } = {}) {
-  const space = spaces().find((s) => s.id === spaceId);
-  const tab = space?.tabs.find((t) => t.id === tabId);
-  if (!tab) return;
-  if (tabBusy(tab)) return keepTab(batch);
-  if (space.tabs.length > 1) return closeTab(tabId);
-
-  const folder = panes().find((p) => p.tab === tabId)?.cwd || space.folder;
-  const on = space.machine ?? null;
-  const repo = await inspect(folder, on);
-
-  // exec awaits: the space, the tab or the other agents in it may have changed.
-  const now = spaces().find((s) => s.id === spaceId);
-  const current = now?.tabs.find((t) => t.id === tabId);
-  if (!current) return;
-  const action = settleAction({
-    lastTab: now.tabs.length <= 1,
-    managed: Boolean(repo?.managed),
-    dirty: repo?.dirty ?? true,
-    merged: repo?.merged ?? false,
-    busy: tabBusy(current),
-    batch,
-  });
-
-  if (action === "keep") return keepTab(batch);
-  if (action === "skip") return "skip";
-  if (action === "close") return closeTab(tabId);
-  if (action === "replace") {
-    // New tab first: closing the last one would close the space.
-    run("tab.new", folder ? { space: spaceId, folder } : { space: spaceId });
-    return closeTab(tabId);
-  }
-  if (action === "remove") {
-    // Another space still shows this checkout: keep the tree, close only this tab.
-    if (inUseElsewhere(spaceId, repo.top, on)) return closeTab(tabId);
-    run("space.close", { id: spaceId, confirmed: true });
-    // Without --force: a checkout git still needs is kept, not lost.
-    const r = await git(repo.main, ["worktree", "remove", repo.top], on);
-    if (!r.ok) notify({ title: "Worktree kept", body: r.err || repo.top, level: "warning" });
-    return "closed";
-  }
-  if (action === "ask") {
-    // The stock dialog warns about uncommitted changes; cancelling leaves all as it is.
-    openOverlay({
-      mod: "worktree",
-      kind: "dialog",
-      width: 440,
-      height: 260,
-      props: { space: spaceId, folder: repo.top, action: "remove" },
-    });
-  }
-}
 
 // A tab nobody named is called by its place ("2"), and the new menu names an agent
 // tab after its program; both say nothing once the agent titles itself. A name
@@ -177,6 +58,8 @@ const SORTS = [
   { id: "priority", label: "Priority", icon: "clock" },
   { id: "grouped", label: "Grouped by space", icon: "layers" },
 ];
+// Same glyph New agent shows for its Terminal chip.
+const SHELL_ICON = "icons/shell.svg";
 const sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[0];
 const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
@@ -198,7 +81,7 @@ function icon(p, size, color) {
 export default class Agents extends View {
   init(_props, cx) {
     this.settling = new Set();
-    if (props()?.sortMenu) return;
+    if (props()?.sortMenu || props()?.terminals) return;
     this.folded = new Set(["settled"]);
     // Each agent's last state and when it changed (ms), kept across restarts.
     this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
@@ -329,6 +212,101 @@ export default class Agents extends View {
     });
   }
 
+  // The Terminals block: tabs with a shell and no agent. Close is always
+  // offered; unlike an agent a shell has no idle or done to wait for.
+  terminalList(t) {
+    const collapsed = narrow();
+    const rows = terminalRows({ spaces: spaces(), panes: panes(), agents: agents(), focused: focused(), home: home() });
+    const row = (r) => {
+      if (collapsed) {
+        return h_flex()
+          .id(`term-${r.tab}`)
+          .h(26)
+          .px(8)
+          .flex_none()
+          .items_center()
+          .justify_center()
+          .when(r.focused, (el) => el.bg(t.selected))
+          .hover((s) => s.bg(t.hover))
+          .on_click(() => run("pane.focus", { pane: r.pane }))
+          .child(svg(SHELL_ICON).size(14).flex_none().text_color(t.foreground));
+      }
+      const hover = this.hovered === r.tab;
+      return h_flex()
+        .id(`term-${r.tab}`)
+        .px(8)
+        .h(r.detail ? 44 : 30)
+        .flex_none()
+        .rounded(8)
+        .items_center()
+        .gap(9)
+        .when(r.focused, (el) => el.bg(t.selected))
+        .cursor_pointer()
+        .hover((s) => s.bg(t.hover))
+        .on_hover((on, cx) => {
+          if (on) this.hovered = r.tab;
+          else if (this.hovered === r.tab) this.hovered = null;
+          cx.notify();
+        })
+        .on_click(() => run("pane.focus", { pane: r.pane }))
+        .child(svg(SHELL_ICON).size(16).flex_none().text_color(t.foreground))
+        .child(v_flex().flex_1().min_w(0)
+          .child(div().min_w(0).truncate().text_color(t.foreground).child(r.name))
+          .when(Boolean(r.detail), (el) => el.child(div().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(r.detail))))
+        .when(hover, (el) => el.child(div()
+          .id(`term-close-${r.tab}`)
+          .flex_none()
+          .p(2)
+          .rounded(4)
+          .text_color(t.dim)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip("Close terminal")
+          .on_click((_e, cx) => {
+            cx.stop_propagation();
+            this.settle(cx, r.space, r.tab);
+            // The row goes away from under the pointer, and no hover-out comes.
+            this.hovered = null;
+            cx.notify();
+          })
+          .child(svg("mods/workspace-chrome/archive.svg").size(13))));
+    };
+    return v_flex()
+      .size_full()
+      .min_h(0)
+      .bg(t.chrome)
+      .border_t(1)
+      .border_color(t.border)
+      .text_size(13)
+      .when(!collapsed, (el) =>
+        el.child(
+          h_flex()
+            .px(16)
+            .h(41)
+            .pt(14)
+            .pb(5)
+            .flex_none()
+            .items_center()
+            .justify_between()
+            .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Terminals"))
+            .child(
+              div()
+                .id("term-new")
+                .text_size(11)
+                .text_color(t.dim)
+                .hover((s) => s.text_color(t.foreground))
+                .on_click(() => openOverlay({ mod: "new-agent", kind: "dialog", width: 560, height: 560, props: { agent: "terminal" } }))
+                .tooltip("New terminal")
+                .child(svg("mods/workspace-chrome/plus.svg").size(14)),
+            ),
+        ),
+      )
+      .when(rows.length === 0 && !collapsed, (el) =>
+        el.child(div().px(12).text_size(12).text_color(t.dim).child("No terminals. + opens one.")),
+      )
+      .child(v_flex().id("term-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows.map(row)));
+  }
+
   // Live sub-agents of `addr`, depth first, each with the tree lines in front of it.
   tree(all, addr, lead = []) {
     const kids = all.filter((k) => k.parent === addr && k.state === "live");
@@ -381,6 +359,7 @@ export default class Agents extends View {
   render(cx) {
     const t = theme();
     if (props()?.sortMenu) return this.sortMenu(t);
+    if (props()?.terminals) return this.terminalList(t);
     const collapsed = narrow();
     const sort = sortOf();
     let list = agents();

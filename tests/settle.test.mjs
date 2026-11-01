@@ -28,8 +28,12 @@ describe("settleAction", () => {
     );
   });
 
-  test("replaces the last tab of an unmanaged space", () => {
-    assert.equal(settleAction({ lastTab: true, managed: false, dirty: true, merged: false }), "replace");
+  test("closes the last tab of an unmanaged space instead of replacing it", () => {
+    assert.equal(settleAction({ lastTab: true, managed: false, dirty: true, merged: false }), "close");
+    assert.equal(
+      settleAction({ lastTab: true, managed: false, dirty: false, merged: true, batch: true }),
+      "close",
+    );
   });
 
   test("removes the space and worktree when the last managed tab is clean and merged", () => {

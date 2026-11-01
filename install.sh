@@ -91,6 +91,9 @@ if [ -e "$app_home/layouts/$layout.json" ]; then
     "$app_home/layouts/$layout.json"; then
     echo "Point that layout's agents block at \"agents-clean\" (or remove the file and re-run)."
   fi
+  if ! grep -Eq "\"terminals\"[[:space:]]*:[[:space:]]*true" "$app_home/layouts/$layout.json"; then
+    echo "layouts/$layout.json is an older copy without the Terminals block - remove it and re-run to get the new layout."
+  fi
 else
   cp "$here/layouts/$layout.json" "$app_home/layouts/"
 fi

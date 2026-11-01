@@ -81,6 +81,8 @@ test("fresh install copies both mods and the layout", async (t) => {
     "mods/agents-clean/main.js",
     "mods/agents-clean/mod.json",
     "mods/agents-clean/settle.js",
+    "mods/agents-clean/close.js",
+    "mods/agents-clean/terminals.js",
     "mods/new-agent/main.js",
     "mods/new-agent/mod.json",
     "mods/new-agent/logic.js",
@@ -216,4 +218,55 @@ test("backs up a changed installed logic.js before replacing it", async (t) => {
     await readFile(installed, "utf8"),
     await readFile(path.join(repoRoot, "mods/new-agent/logic.js"), "utf8"),
   );
+});
+
+const OLD_HINT =
+  "layouts/main-settle.json is an older copy without the Terminals block - remove it and re-run to get the new layout.";
+
+test("a fresh install ships a layout with the Terminals block and prints no older-copy hint", async (t) => {
+  const { appHome, home } = await setup(t);
+
+  const result = ok(runInstall(appHome, home));
+
+  assert.match(await readFile(path.join(appHome, "layouts/main-settle.json"), "utf8"), /"terminals"\s*:\s*true/);
+  assert.equal(`${result.stdout}${result.stderr}`.includes("older copy"), false);
+});
+
+test("hints when a kept layout has no Terminals block", async (t) => {
+  const { appHome, home } = await setup(t);
+  await mkdir(path.join(appHome, "layouts"), { recursive: true });
+  const old = '{ "id": "root", "children": [{ "id": "agents", "content": { "mod": "agents-clean" } }] }\n';
+  await writeFile(path.join(appHome, "layouts/main-settle.json"), old);
+
+  const result = ok(runInstall(appHome, home));
+  const output = `${result.stdout}${result.stderr}`;
+
+  assert.equal(await readFile(path.join(appHome, "layouts/main-settle.json"), "utf8"), old);
+  assert.ok(output.includes(OLD_HINT), `missing hint in:\n${output}`);
+  assert.equal(output.includes("Point that layout's agents block"), false);
+});
+
+test("keeps the agents-clean hint next to the older-copy hint", async (t) => {
+  const { appHome, home } = await setup(t);
+  await mkdir(path.join(appHome, "layouts"), { recursive: true });
+  await writeFile(path.join(appHome, "layouts/main-settle.json"), '{ "id": "root" }\n');
+
+  const result = ok(runInstall(appHome, home));
+  const output = `${result.stdout}${result.stderr}`;
+
+  assert.match(output, /Point that layout's agents block at "agents-clean"/);
+  assert.ok(output.includes(OLD_HINT), `missing hint in:\n${output}`);
+});
+
+test("prints no older-copy hint when a kept layout has the Terminals block", async (t) => {
+  const { appHome, home } = await setup(t);
+  await mkdir(path.join(appHome, "layouts"), { recursive: true });
+  const current =
+    '{ "id": "root", "children": [{ "content": { "mod": "agents-clean", "props": { "terminals": true } } }] }\n';
+  await writeFile(path.join(appHome, "layouts/main-settle.json"), current);
+
+  const result = ok(runInstall(appHome, home));
+
+  assert.equal(`${result.stdout}${result.stderr}`.includes("older copy"), false);
+  assert.equal(await readFile(path.join(appHome, "layouts/main-settle.json"), "utf8"), current);
 });

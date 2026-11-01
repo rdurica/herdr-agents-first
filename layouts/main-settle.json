@@ -26,21 +26,24 @@
           "type": "column",
           "children": [
             {
-              "id": "spaces",
-              "type": "block",
-              "content": {
-                "mod": "spaces"
-              },
-              "size": {
-                "weight": 1
-              },
-              "min": 90
-            },
-            {
               "id": "agents",
               "type": "block",
               "content": {
                 "mod": "agents-clean"
+              },
+              "size": {
+                "weight": 2
+              },
+              "min": 90
+            },
+            {
+              "id": "terminals",
+              "type": "block",
+              "content": {
+                "mod": "agents-clean",
+                "props": {
+                  "terminals": true
+                }
               },
               "size": {
                 "weight": 1
