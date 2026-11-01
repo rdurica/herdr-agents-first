@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-11-01
 
 - **Renamed to Agents first** (`herdr-agents-first`). The layout is now
   `agents-first` and ships as `install/agents-first.json`: herdr.dev does not
