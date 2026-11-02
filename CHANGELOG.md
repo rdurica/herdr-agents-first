@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-11-02
 
 - **Terminals show the running program.** A Terminals row draws the program's
   own icon instead of the shell, and for a program that is not a shell its name
