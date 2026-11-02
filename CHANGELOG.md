@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Terminals show the running program.** A Terminals row draws the program's
+  own icon instead of the shell, and for a program that is not a shell its name
+  and the telling part of the terminal title take the folder's place
+  (`K9s · erp/stockadmin-e2e-uat`), with the machine kept for a remote space. A
+  program with no icon keeps the shell glyph. A shell keeps the folder line; so
+  does a title that only repeats the program, looks like a path, or carries a
+  `user@host` prompt.
+
 ## 0.3.0 — 2026-11-01
 
 - **New agent works across Herdr machines.** The project list now includes the

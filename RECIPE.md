@@ -92,10 +92,14 @@ left out; order is spaces, then tabs.
 - **Header** "Terminals" like the Agents one, with `+` ("New terminal") opening
   `new-agent` with `props: { agent: "terminal" }`. No sort, pins, groups or
   collapse footer.
-- **Row**: shell icon (`icons/shell.svg`), the tab name (the space name when
-  the tab has no name of its own) and a dim line with the pane's folder, home
-  as `~`, prefixed `<machine> · ` for a remote space. 30px, 44px with the
-  line; `selected` when focused. Click: `pane.focus {pane}`.
+- **Row**: the icon of the program running in the pane (`icons/shell.svg` for a
+  shell or a program with no icon), the tab name (the space name when the tab
+  has no name of its own) and a dim line. For a shell that line is the pane's
+  folder, home as `~`, prefixed `<machine> · ` for a remote space; for another
+  program it is `<machine> · program · title` (the title only when it says
+  something beyond the program, not a path or a `user@host` prompt, else the
+  folder). 30px, 44px with the line; `selected` when focused. Click:
+  `pane.focus {pane}`.
 - **Hover**: one archive button, tooltip "Close terminal", calls the same
   `settleTab` as an agent (`close.js`), so a worktree's removal rules apply.
   A shell has no idle or done to wait for, so it is always offered.

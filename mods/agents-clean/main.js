@@ -6,7 +6,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, home, notify, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
 import { settleInTurn } from "./settle.js";
 import { git, settleTab, tabBusy } from "./close.js";
-import { terminalRows } from "./terminals.js";
+import { terminalRows, titleOf } from "./terminals.js";
 import { rememberSpaces } from "./recent.js";
 
 function find(node, id) {
@@ -39,11 +39,8 @@ function toggleSidebar() {
   run("layout.resize", { id: "sidebar", px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
 }
 
-// Strip a spinner or other decoration, but keep a leading ~ or / so a path still
-// looks like one: title() leaves paths out.
-const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}~\/]+/u, "").trim();
 // OpenCode prefixes its terminal title with "OC | "; only the session name is news.
-const sessionTitle = (s) => clean(s).replace(/^OC\s*\|\s*/i, "");
+const sessionTitle = (s) => titleOf(s).replace(/^OC\s*\|\s*/i, "");
 
 
 // A tab nobody named is called by its place ("2"), and the new menu names an agent
@@ -68,7 +65,8 @@ const SORTS = [
   { id: "priority", label: "Priority", icon: "clock" },
   { id: "grouped", label: "Grouped by space", icon: "layers" },
 ];
-// Same glyph New agent shows for its Terminal chip.
+// Same glyph New agent shows for its Terminal chip, and the Terminals row's
+// fallback when the running program has no icon of its own.
 const SHELL_ICON = "icons/shell.svg";
 const sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[0];
 const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
@@ -254,6 +252,11 @@ export default class Agents extends View {
     const collapsed = narrow();
     const rows = terminalRows({ spaces: spaces(), panes: panes(), agents: agents(), focused: focused(), home: home() });
     const row = (r) => {
+      // A running program brings its own glyph; a shell or an iconless program
+      // keeps the shell icon.
+      const pic = r.program && !r.program.shell
+        ? icon(r.program, collapsed ? 14 : 16, t.foreground)
+        : null;
       if (collapsed) {
         return h_flex()
           .id(`term-${r.tab}`)
@@ -265,7 +268,7 @@ export default class Agents extends View {
           .when(r.focused, (el) => el.bg(t.selected))
           .hover((s) => s.bg(t.hover))
           .on_click(() => run("pane.focus", { pane: r.pane }))
-          .child(svg(SHELL_ICON).size(14).flex_none().text_color(t.foreground));
+          .child(pic ?? svg(SHELL_ICON).size(14).flex_none().text_color(t.foreground));
       }
       const hover = this.hovered === r.tab;
       return h_flex()
@@ -285,7 +288,7 @@ export default class Agents extends View {
           cx.notify();
         })
         .on_click(() => run("pane.focus", { pane: r.pane }))
-        .child(svg(SHELL_ICON).size(16).flex_none().text_color(t.foreground))
+        .child(pic ?? svg(SHELL_ICON).size(16).flex_none().text_color(t.foreground))
         .child(v_flex().flex_1().min_w(0)
           .child(div().min_w(0).truncate().text_color(t.foreground).child(r.name))
           .when(Boolean(r.detail), (el) => el.child(div().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(r.detail))))

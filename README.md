@@ -31,7 +31,7 @@ Settle closes them — you just never manage them.
 | | |
 |---|---|
 | **Agents** | *Needs you*, *Working*, *Done*, *Idle* — pins, sub-agents, click to jump. |
-| **Terminals** | Every tab without an agent, with its project and folder. |
+| **Terminals** | Every tab without an agent, with its project and folder — and the running program's icon and name. |
 | **New task** (`ctrl-shift-a`) | Type the task, press Enter. Project and agent are pre-picked; worktree optional. |
 | **Settle closes** | Archiving a finished agent closes its tab; a merged worktree goes with it. |
 
@@ -84,9 +84,13 @@ chosen. Remote machines come from Herdr's *Settings → Machines* (or
 ## Terminals
 
 The list under Agents shows every tab without an agent, with its project and
-folder (and the machine for a remote one). Click to focus it, hover to close
-it. `+` opens New agent with Terminal selected; your default agent does not
-change. There is no idle/done gate here — a shell has no status, so you decide.
+folder (and the machine for a remote one). A row carries the icon of the
+program running in the pane; for a program that is not a shell, its name and
+the telling part of the terminal title replace the folder
+(`K9s · erp/stockadmin-e2e-uat`), so a remote `k9s` or `htop` reads as itself.
+Click to focus it, hover to close it. `+` opens New agent with Terminal
+selected; your default agent does not change. There is no idle/done gate here —
+a shell has no status, so you decide.
 
 ## Settle
 
