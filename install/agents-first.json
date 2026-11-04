@@ -82,7 +82,7 @@
           "id": "tabs",
           "type": "block",
           "content": {
-            "mod": "tabs"
+            "mod": "work-bar"
           },
           "size": {
             "px": 42

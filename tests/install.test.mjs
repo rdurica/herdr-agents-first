@@ -86,6 +86,8 @@ test("fresh install copies both mods and the layout", async (t) => {
     "mods/new-agent/main.js",
     "mods/new-agent/mod.json",
     "mods/new-agent/logic.js",
+    "mods/work-bar/main.js",
+    "mods/work-bar/mod.json",
     "layouts/agents-first.json",
   ];
   for (const rel of installed) {
@@ -97,6 +99,7 @@ test("fresh install copies both mods and the layout", async (t) => {
     "mods/agents-clean/settle.js",
     "mods/new-agent/main.js",
     "mods/new-agent/logic.js",
+    "mods/work-bar/main.js",
   ]) {
     assert.equal(
       await readFile(path.join(appHome, rel), "utf8"),
@@ -274,6 +277,28 @@ test("keeps the agents-clean hint next to the older-copy hint", async (t) => {
 
   assert.match(output, /Point that layout's agents block at "agents-clean"/);
   assert.ok(output.includes(OLD_HINT), `missing hint in:\n${output}`);
+});
+
+test("hints when a kept layout still shows the tab bar", async (t) => {
+  const { appHome, home } = await setup(t);
+  await mkdir(path.join(appHome, "layouts"), { recursive: true });
+  const old = '{ "id": "root", "children": [{ "id": "tabs", "content": { "mod": "tabs" } }] }\n';
+  await writeFile(path.join(appHome, "layouts/agents-first.json"), old);
+
+  const output = (({ stdout, stderr }) => `${stdout}${stderr}`)(ok(runInstall(appHome, home)));
+
+  assert.equal(await readFile(path.join(appHome, "layouts/agents-first.json"), "utf8"), old);
+  assert.match(output, /still shows the tab bar - point its "tabs" block at "work-bar"/);
+});
+
+test("prints no tab-bar hint when a kept layout uses work-bar", async (t) => {
+  const { appHome, home } = await setup(t);
+  await mkdir(path.join(appHome, "layouts"), { recursive: true });
+  await writeFile(path.join(appHome, "layouts/agents-first.json"), '{ "id": "tabs", "content": { "mod": "work-bar" } }\n');
+
+  const result = ok(runInstall(appHome, home));
+
+  assert.equal(`${result.stdout}${result.stderr}`.includes("still shows the tab bar"), false);
 });
 
 test("prints no older-copy hint when a kept layout has the Terminals block", async (t) => {

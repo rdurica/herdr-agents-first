@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **No tab bar.** The bar above the work area is the new `work-bar` mod: the
+  shipped tabs bar without its tabs and `+`, since Agents and Terminals in the
+  sidebar already switch between them. Files, Changes, the window buttons and
+  window dragging stay. An existing `agents-first` layout is kept; the
+  installer says to point its `tabs` block at `work-bar`.
+
 ## 0.4.0 — 2026-11-02
 
 - **Terminals show the running program.** A Terminals row draws the program's

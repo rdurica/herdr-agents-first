@@ -25,6 +25,14 @@ describe("install/agents-first.json", () => {
     assert.equal(list.children.some((c) => c.id === "spaces" || c.content?.mod === "spaces"), false);
   });
 
+  test("shows the work bar, not the tab bar, above the work area", async () => {
+    const layout = JSON.parse(await readFile(path.join(repoRoot, "install/agents-first.json"), "utf8"));
+    const work = layout.children.find((c) => c.id === "work");
+    const bar = work.children.find((c) => c.id === "tabs");
+    assert.deepEqual(bar.content, { mod: "work-bar" });
+    assert.equal(bar.window_drag, true);
+  });
+
   test("lists agents above terminals, both from agents-clean", async () => {
     const list = await lists();
     assert.deepEqual(

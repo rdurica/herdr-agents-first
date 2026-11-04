@@ -8,9 +8,10 @@ worktree when the work is merged.
 
 ![Agents first](preview.png)
 
-This brief builds two mods and one layout: `agents-clean` (the Agents panel,
+This brief builds three mods and one layout: `agents-clean` (the Agents panel,
 and a second copy of it with `props.terminals` for the Terminals list),
-`new-agent` (the New agent dialog) and the `agents-first` layout that shows
+`new-agent` (the New agent dialog), `work-bar` (the bar above the work area,
+without tabs) and the `agents-first` layout that shows
 them. Spaces stay in Herdr as plumbing: New agent makes them, Settle closes
 them.
 
@@ -267,7 +268,8 @@ branch input and a Start button.
   `sidebar-lists` (`agents` block weight 2, min 90, content
   `{mod: "agents-clean"}`; `terminals` block weight 1, min 90, content
   `{mod: "agents-clean", props: {terminals: true}}`; no spaces list), `sidebar-footer` (workspace-chrome,
-  `footer: true`, 69px); and `work` (column) with `tabs` (tabs mod, 42px),
+  `footer: true`, 69px); and `work` (column) with `tabs` (`work-bar` mod,
+  42px, window drag),
   `work-body` (row: `main` active tab pane with `pane` header 30px, and
   `panel` stack with `files` / `changes`, 368px, hidden), `status`
   (workspace-status, 28px). Background `canvas`, `titlebar: "none"`,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the "agents-clean" and "new-agent" Herdr mods, the "agents-first"
+# Installs the "agents-clean", "new-agent" and "work-bar" Herdr mods, the "agents-first"
 # layout, and (when keys.json is there) the ctrl-shift-a key that opens the
 # New agent dialog.
 # Usage: ./install.sh            (HERDR_APP_HOME or ~/.config/herdr-app)
@@ -8,7 +8,7 @@ set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 app_home=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
-mods="agents-clean new-agent"
+mods="agents-clean new-agent work-bar"
 layout=agents-first
 cache_root=${XDG_CACHE_HOME:-${HOME:-$app_home}/.cache}/herdr-agents-first
 
@@ -93,6 +93,9 @@ if [ -e "$app_home/layouts/$layout.json" ]; then
   fi
   if ! grep -Eq "\"terminals\"[[:space:]]*:[[:space:]]*true" "$app_home/layouts/$layout.json"; then
     echo "layouts/$layout.json is an older copy without the Terminals block - remove it and re-run to get the new layout."
+  fi
+  if ! grep -Eq "\"mod\"[[:space:]]*:[[:space:]]*\"work-bar\"" "$app_home/layouts/$layout.json"; then
+    echo "layouts/$layout.json still shows the tab bar - point its \"tabs\" block at \"work-bar\" (or remove the file and re-run)."
   fi
 else
   cp "$here/install/$layout.json" "$app_home/layouts/"

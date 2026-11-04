@@ -124,7 +124,7 @@ cd herdr-agents-first
 ./install.sh
 ```
 
-It copies both mods and the `agents-first` layout into `~/.config/herdr-app/`,
+It copies the three mods and the `agents-first` layout into `~/.config/herdr-app/`,
 adds `ctrl-shift-a` to `keys.json` (a key you already use is left alone), runs
 `herdr-app check` and switches the layout. An existing layout is never
 overwritten; locally changed files are backed up to
@@ -182,7 +182,9 @@ once you have switched; the installer reminds you while it is there.
   Herdr: the machine-aware project list, history, filter, branch names and
   launch plans.
 - `install/agents-first.json` is the stock `main` layout with Spaces replaced
-  by Agents (two thirds) and Terminals (one third).
+  by Agents (two thirds) and Terminals (one third), and the tab bar replaced
+  by `work-bar`: the same bar without tabs, keeping Files, Changes, the window
+  buttons and window dragging.
 
 After a Herdr update that changes `mods/agents`, copy it over `agents-clean`
 again and re-apply the settle and Terminals changes, or the panel falls behind.
@@ -190,7 +192,8 @@ again and re-apply the settle and Terminals changes, or the panel falls behind.
 ## Uninstall
 
 ```sh
-rm -rf ~/.config/herdr-app/mods/agents-clean ~/.config/herdr-app/mods/new-agent
+rm -rf ~/.config/herdr-app/mods/agents-clean ~/.config/herdr-app/mods/new-agent \
+  ~/.config/herdr-app/mods/work-bar
 rm ~/.config/herdr-app/layouts/agents-first.json
 ```
 
