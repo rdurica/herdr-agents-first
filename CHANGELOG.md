@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-11-04
 
 - **No tab bar.** The bar above the work area is the new `work-bar` mod: the
   shipped tabs bar without its tabs and `+`, since Agents and Terminals in the
